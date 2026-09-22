@@ -12,9 +12,10 @@ Follows Home Assistant's timezone, and handles zone failures properly.
   as `skipped_unavailable`, without the rest of the program being abandoned.
 - **Failed turn-offs are retried** 4 times before giving up, and a run whose
   valve couldn't be closed is logged as an error with a loud log line.
-- **A failed turn-on no longer waits out its duration** doing nothing.
-- **Open valves are closed on shutdown**, before the run tasks are torn down,
-  and those runs are logged `interrupted`.
+- **A run cut short by a restart is logged `interrupted`** instead of
+  `completed`. Open valves are now closed explicitly during shutdown, before
+  the run tasks are torn down, rather than relying on task cancellation to get
+  there.
 - **Valves left open by a hard kill or power loss are closed at next startup** -
   any run still marked `running` is reconciled by actually closing that zone.
   Zones switched on by hand outside the add-on are untouched.
