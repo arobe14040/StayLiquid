@@ -382,6 +382,14 @@ def close_orphaned_runs() -> int:
         return cur.rowcount
 
 
+def list_history_since(since_iso: str) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM run_log WHERE started_at >= ? ORDER BY id DESC", (since_iso,)
+    ).fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
 def list_history(limit: int = 50) -> list[dict]:
     conn = get_conn()
     rows = conn.execute(

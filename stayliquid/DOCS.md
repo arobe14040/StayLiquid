@@ -17,8 +17,9 @@
   rain-delay buttons (12h / 24h / 48h / 72h / custom). A rain delay suspends
   every *scheduled* run until it expires; manual "Run now" / zone test-fires
   still work during a delay.
-- **History** - a log of every run: which zone, which program, when, and
-  whether it completed, errored, or was skipped for rain delay.
+- **History** - an overview of the last two weeks: how much water went out,
+  how long the system ran, a daily activity chart, and a log of every run.
+  Anything that errored or was skipped is pulled out into a panel at the top.
 
 Weather-based auto rain-delay is not implemented yet - it's a manual button
 for now, by design.
@@ -32,11 +33,12 @@ for now, by design.
    dropdown (only `switch.*`/`valve.*` entities show up) and give it a
    name. Use **Run** with a short duration to test that the right valve
    actually turns on before you build a schedule around it.
-4. **Programs tab** - click a growth-stage preset. It fills in the cycle
-   times, the per-zone runtime, and adds every zone you've configured, then
-   shows a preview of exactly when each zone will start. Adjust anything you
-   like, name it, and save. Repeat for as many programs as you want (e.g. one
-   per zone group, or one per growth stage as the lawn matures).
+4. **Programs tab** - hit **New program**. Pick the growth stage your lawn is
+   at and the rest is filled in for you: cycle times, per-zone runtime, and
+   every zone you've configured. Step through the schedule and zones, check the
+   preview of exactly when each zone will start, and save. Repeat for as many
+   programs as you want (e.g. one per zone group, or one per growth stage as
+   the lawn matures).
 5. Check the **Dashboard** to confirm the next run times look right.
 
 ## Growth-stage presets

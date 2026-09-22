@@ -95,32 +95,81 @@
 
     <!-- ----------------------------------------------------------- Programs -->
     <section id="tab-programs" class="tab-panel">
+      <div class="card">
+        <div class="hero-head">
+          <h2>Your programs</h2>
+          <button class="btn btn-primary" id="new-program-btn">+ New program</button>
+        </div>
+        <div id="programs-list" class="stack"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------ History -->
+    <section id="tab-history" class="tab-panel">
+      <div id="history-attention"></div>
 
       <div class="card">
-        <h2>Start from a growth stage</h2>
-        <p class="hint">
-          Each stage fills in the cycle times and per-zone runtime below. Everything
-          stays editable, and the schedule preview updates as you change it.
-        </p>
-        <div id="preset-gallery" class="preset-gallery"></div>
+        <div class="hero-head">
+          <h2>Last 14 days</h2>
+          <span id="history-timezone" class="pill pill-quiet"></span>
+        </div>
+        <div id="history-stats" class="summary-grid"></div>
+        <figure id="history-chart" class="chart">
+          <figcaption class="chart-title">
+            <span>Time watering per day</span>
+            <span class="chart-peak" id="chart-peak"></span>
+          </figcaption>
+          <div class="chart-plot" id="chart-plot"></div>
+        </figure>
       </div>
 
-      <div class="card" id="program-form">
-        <div class="hero-head">
-          <h2 id="builder-title">Build a program</h2>
-          <button class="btn btn-ghost btn-small" id="pf-cancel-btn" hidden>Cancel edit</button>
-        </div>
+      <div class="card">
+        <h2>Recent runs</h2>
+        <div id="history-list" class="stack"></div>
+      </div>
+    </section>
 
+  </main>
+</div>
+
+<!-- ------------------------------------------------- program builder (modal) -->
+<div id="program-modal" class="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+
+    <header class="modal-head">
+      <div>
+        <h2 id="modal-title">New program</h2>
+        <p class="modal-sub" id="modal-sub"></p>
+      </div>
+      <button class="btn btn-icon" id="modal-close" aria-label="Close">&times;</button>
+    </header>
+
+    <ol class="stepper" id="modal-stepper"></ol>
+
+    <div class="modal-body" id="modal-body">
+
+      <!-- Step: starting point -->
+      <section class="step" data-step="start">
+        <p class="hint">
+          Pick the stage your lawn is at and everything below gets filled in - cycle
+          times, how long each zone runs, and how often. You can change any of it.
+        </p>
+        <div id="preset-gallery" class="preset-gallery"></div>
+        <button type="button" class="blank-start" id="pf-custom-start">
+          <strong>Start from blank</strong>
+          <span>Set the days, cycles and durations yourself.</span>
+        </button>
+      </section>
+
+      <!-- Step: schedule -->
+      <section class="step" data-step="schedule" hidden>
         <label class="field">
           <span>Program name</span>
           <input type="text" id="pf-name" placeholder="e.g. Back lawn - new seed" />
         </label>
 
-        <!-- Which days -->
         <div class="section">
-          <div class="section-head">
-            <h3>Which days</h3>
-          </div>
+          <div class="section-head"><h3>Which days</h3></div>
           <div class="segmented" id="pf-schedule-type" data-value="weekdays">
             <button type="button" data-value="weekdays">Days of the week</button>
             <button type="button" data-value="interval">Every N days</button>
@@ -144,7 +193,6 @@
           </div>
         </div>
 
-        <!-- Cycles per day: the multi-time editor -->
         <div class="section">
           <div class="section-head">
             <h3>Cycles per day</h3>
@@ -161,75 +209,57 @@
             <button type="button" class="btn btn-small" data-quick-cycles="3">3&times; a day</button>
           </div>
           <div id="pf-cycles" class="cycle-list"></div>
-          <button class="btn btn-ghost btn-small" id="pf-add-cycle-btn">+ Add a cycle</button>
+          <button type="button" class="btn btn-ghost btn-small" id="pf-add-cycle-btn">+ Add a cycle</button>
+        </div>
+      </section>
+
+      <!-- Step: zones -->
+      <section class="step" data-step="zones" hidden>
+        <div class="section-head"><h3>Zones in run order</h3></div>
+        <div id="pf-zones-list" class="stack"></div>
+        <div class="field-row">
+          <label class="field">
+            <span>Add zone</span>
+            <select id="pf-add-zone-select"></select>
+          </label>
+          <label class="field field-narrow">
+            <span>Minutes each</span>
+            <input type="number" id="pf-add-zone-duration" min="0.5" step="0.5" placeholder="10" />
+          </label>
+          <button type="button" class="btn" id="pf-add-zone-btn">Add</button>
         </div>
 
-        <!-- Zones -->
         <div class="section">
-          <div class="section-head">
-            <h3>Zones in run order</h3>
-          </div>
-          <div id="pf-zones-list" class="stack"></div>
-          <div class="field-row">
-            <label class="field">
-              <span>Add zone</span>
-              <select id="pf-add-zone-select"></select>
-            </label>
-            <label class="field field-narrow">
-              <span>Minutes each</span>
-              <input type="number" id="pf-add-zone-duration" min="0.5" step="0.5" placeholder="10" />
-            </label>
-            <button class="btn" id="pf-add-zone-btn">Add</button>
-          </div>
-        </div>
-
-        <!-- Run mode -->
-        <div class="section">
-          <div class="section-head">
-            <h3>How zones run</h3>
-          </div>
+          <div class="section-head"><h3>How zones run</h3></div>
           <div class="segmented" id="pf-run-mode" data-value="sequential">
             <button type="button" data-value="sequential">One at a time</button>
             <button type="button" data-value="simultaneous">All together</button>
           </div>
           <p class="hint" id="run-mode-hint"></p>
         </div>
+      </section>
 
-        <!-- Live preview -->
-        <div class="section">
-          <div class="section-head">
-            <h3>Schedule preview</h3>
-          </div>
-          <div id="timeline-summary" class="summary-grid"></div>
-          <div id="timeline-warning" class="notice notice-warn" hidden></div>
-          <div id="timeline-preview" class="timeline-wrap"></div>
-        </div>
+      <!-- Step: review -->
+      <section class="step" data-step="review" hidden>
+        <div id="timeline-summary" class="summary-grid"></div>
+        <div id="timeline-warning" class="notice notice-warn" hidden></div>
+        <div id="timeline-preview" class="timeline-wrap"></div>
+        <label class="switch review-enabled">
+          <input type="checkbox" id="pf-enabled" checked />
+          <span>Start running this program as soon as it's saved</span>
+        </label>
+      </section>
 
-        <div class="btn-row form-actions">
-          <label class="switch">
-            <input type="checkbox" id="pf-enabled" checked />
-            <span>Enabled</span>
-          </label>
-          <button class="btn btn-primary" id="pf-save-btn">Save program</button>
-        </div>
-      </div>
+    </div>
 
-      <div class="card">
-        <h2>Saved programs</h2>
-        <div id="programs-list" class="stack"></div>
-      </div>
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" id="modal-back">Back</button>
+      <span class="modal-step-note" id="modal-step-note"></span>
+      <button class="btn btn-primary" id="modal-next">Next</button>
+      <button class="btn btn-primary" id="modal-save" hidden>Save program</button>
+    </footer>
 
-    </section>
-
-    <!-- ------------------------------------------------------------ History -->
-    <section id="tab-history" class="tab-panel">
-      <div class="card">
-        <h2>Recent runs</h2>
-        <div id="history-list" class="stack"></div>
-      </div>
-    </section>
-
-  </main>
+  </div>
 </div>
 
 <div id="toasts" class="toasts"></div>

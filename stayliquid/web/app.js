@@ -377,7 +377,6 @@ async function loadProgramsTab() {
 
   renderPresetGallery();
   renderProgramsList(programs);
-  renderBuilder();
 }
 
 function renderPresetGallery() {
@@ -431,8 +430,7 @@ function applyPreset(preset) {
   el("pf-add-zone-duration").value = preset.duration_minutes;
 
   renderBuilder();
-  el("program-form").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast(`Loaded Stage ${preset.stage}: ${preset.name}.`);
+  goToStep(modalSteps.indexOf("schedule"));
 }
 
 // -- builder: schedule type / days / run mode
@@ -767,31 +765,129 @@ function resetBuilder() {
   el("pf-name").value = "";
   el("pf-add-zone-duration").value = "";
   el("pf-enabled").checked = true;
-  el("pf-cancel-btn").hidden = true;
-  el("pf-save-btn").textContent = "Save program";
-  el("builder-title").textContent = "Build a program";
   renderBuilder();
 }
 
-el("pf-cancel-btn").addEventListener("click", () => {
+// ---- the builder modal --------------------------------------------------
+
+const STEP_INFO = {
+  start: { name: "Start", note: "Pick the stage your lawn is at, or start from blank." },
+  schedule: { name: "Schedule", note: "Name it, then choose the days and cycle times." },
+  zones: { name: "Zones", note: "Pick the zones and how long each one runs." },
+  review: { name: "Review", note: "Check the timings, then save." },
+};
+
+let modalSteps = [];
+let stepIndex = 0;
+let lastFocused = null;
+
+function openModal(program) {
+  lastFocused = document.activeElement;
+  if (program) {
+    fillBuilderFrom(program);
+    modalSteps = ["schedule", "zones", "review"];
+    el("modal-title").textContent = "Edit program";
+    el("modal-sub").textContent = program.name;
+  } else {
+    resetBuilder();
+    modalSteps = ["start", "schedule", "zones", "review"];
+    el("modal-title").textContent = "New program";
+    el("modal-sub").textContent = "Four quick steps.";
+  }
+  el("program-modal").hidden = false;
+  document.body.style.overflow = "hidden";
+  goToStep(0);
+}
+
+function closeModal(skipConfirm) {
+  const started = builder.zones.length || builder.cycles.length || el("pf-name").value.trim();
+  if (!skipConfirm && started && !confirm("Discard this program?")) return;
+  el("program-modal").hidden = true;
+  document.body.style.overflow = "";
   resetBuilder();
-  toast("Edit cancelled.");
+  if (lastFocused) lastFocused.focus();
+}
+
+function goToStep(index) {
+  stepIndex = Math.max(0, Math.min(index, modalSteps.length - 1));
+  const step = modalSteps[stepIndex];
+
+  document.querySelectorAll(".step").forEach((section) => {
+    section.hidden = section.dataset.step !== step;
+  });
+
+  el("modal-stepper").innerHTML = modalSteps
+    .map((name, i) => {
+      const state = i === stepIndex ? "current" : i < stepIndex ? "done" : "";
+      return `<li class="${state}">
+        <span class="dot">${i < stepIndex ? "&check;" : i + 1}</span>
+        <span class="step-name">${STEP_INFO[name].name}</span>
+      </li>`;
+    })
+    .join("");
+
+  el("modal-step-note").textContent = STEP_INFO[step].note;
+  el("modal-back").hidden = stepIndex === 0;
+  const onReview = step === "review";
+  el("modal-next").hidden = onReview;
+  el("modal-save").hidden = !onReview;
+  el("modal-save").textContent = builder.editingId ? "Save changes" : "Save program";
+
+  if (onReview) renderTimeline();
+  el("modal-body").scrollTop = 0;
+
+  const firstInput = document.querySelector(`.step[data-step="${step}"] input, .step[data-step="${step}"] select`);
+  if (firstInput) firstInput.focus({ preventScroll: true });
+}
+
+function stepProblem(step) {
+  if (step === "schedule") {
+    if (!el("pf-name").value.trim()) return "Give the program a name.";
+    if (builder.scheduleType === "weekdays" && !builder.weekdays.size) {
+      return "Pick at least one day of the week.";
+    }
+    if (!builder.cycles.length) return "Add at least one cycle time.";
+  }
+  if (step === "zones" && !builder.zones.length) {
+    return zonesCache.length
+      ? "Add at least one zone."
+      : "You have no zones yet - add them on the Zones tab first.";
+  }
+  return null;
+}
+
+el("new-program-btn").addEventListener("click", () => openModal(null));
+el("modal-close").addEventListener("click", () => closeModal(false));
+el("modal-back").addEventListener("click", () => goToStep(stepIndex - 1));
+el("pf-custom-start").addEventListener("click", () => goToStep(modalSteps.indexOf("schedule")));
+
+el("modal-next").addEventListener("click", () => {
+  const problem = stepProblem(modalSteps[stepIndex]);
+  if (problem) return toast(problem, "error");
+  goToStep(stepIndex + 1);
 });
 
-el("pf-save-btn").addEventListener("click", () =>
-  guard(async () => {
-    const name = el("pf-name").value.trim();
-    if (!name) throw new Error("Give the program a name.");
-    if (!builder.cycles.length) throw new Error("Add at least one cycle time.");
-    if (!builder.zones.length) throw new Error("Add at least one zone.");
+el("program-modal").addEventListener("click", (e) => {
+  if (e.target === el("program-modal")) closeModal(false);
+});
 
-    const weekdays = DAYS.filter((d) => builder.weekdays.has(d)).join(",");
-    if (builder.scheduleType === "weekdays" && !weekdays) {
-      throw new Error("Pick at least one day of the week.");
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !el("program-modal").hidden) closeModal(false);
+});
+
+el("modal-save").addEventListener("click", () =>
+  guard(async () => {
+    for (const step of modalSteps) {
+      const problem = stepProblem(step);
+      if (problem) {
+        goToStep(modalSteps.indexOf(step));
+        throw new Error(problem);
+      }
     }
 
+    const weekdays = DAYS.filter((d) => builder.weekdays.has(d)).join(",");
     const payload = {
-      name,
+      name: el("pf-name").value.trim(),
       stage: builder.stage,
       schedule_type: builder.scheduleType,
       weekdays: builder.scheduleType === "weekdays" ? weekdays : null,
@@ -811,12 +907,12 @@ el("pf-save-btn").addEventListener("click", () =>
     } else {
       await apiPost("api/programs", payload);
     }
-    resetBuilder();
+    closeModal(true);
     await loadProgramsTab();
   }, "Program saved.")
 );
 
-function editProgram(p) {
+function fillBuilderFrom(p) {
   builder.editingId = p.id;
   builder.autoName = "";
   builder.stage = p.stage || "custom";
@@ -832,17 +928,13 @@ function editProgram(p) {
   }));
   el("pf-name").value = p.name;
   el("pf-enabled").checked = !!p.enabled;
-  el("pf-cancel-btn").hidden = false;
-  el("pf-save-btn").textContent = "Save changes";
-  el("builder-title").textContent = `Editing "${p.name}"`;
   renderBuilder();
-  el("program-form").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderProgramsList(programs) {
   const list = el("programs-list");
   if (!programs.length) {
-    emptyState(list, "No programs yet. Pick a growth stage above to build your first one.");
+    emptyState(list, 'No programs yet. Hit "New program" to build your first one.');
     return;
   }
 
@@ -876,12 +968,11 @@ function renderProgramsList(programs) {
         await loadProgramsTab();
       })
     );
-    row.querySelector(".edit-program").addEventListener("click", () => editProgram(p));
+    row.querySelector(".edit-program").addEventListener("click", () => openModal(p));
     row.querySelector(".delete-program").addEventListener("click", () =>
       guard(async () => {
         if (!confirm(`Delete program "${p.name}"?`)) return;
         await apiDelete(`api/programs/${p.id}`);
-        if (builder.editingId === p.id) resetBuilder();
         await loadProgramsTab();
       })
     );
@@ -909,7 +1000,158 @@ const STATUS_LABEL = {
 };
 
 async function loadHistoryTab() {
-  const rows = await apiGet("api/history?limit=50");
+  const [stats, rows] = await Promise.all([
+    apiGet("api/history/stats?days=14"),
+    apiGet("api/history?limit=60"),
+  ]);
+  renderAttention(stats);
+  renderHistoryStats(stats);
+  renderActivityChart(stats);
+  renderHistoryList(rows);
+}
+
+function renderAttention(stats) {
+  const host = el("history-attention");
+  const items = stats.attention || [];
+  if (!items.length) {
+    host.innerHTML = "";
+    return;
+  }
+
+  // Errors mean something went wrong; a skip is usually deliberate (rain delay).
+  const hasError = items.some((r) => r.status === "error" || r.status === "interrupted");
+  const rows = items
+    .map((r) => {
+      const label = STATUS_LABEL[r.status] || r.status;
+      // A whole-program skip has no zone, so the program name is already the title.
+      const detail = r.zone_name
+        ? `${escapeHtml(r.program_name || "Manual")} &middot; ${fmtDateTime(r.started_at)}`
+        : `Whole program &middot; ${fmtDateTime(r.started_at)}`;
+      return `<div class="row-item">
+        <div class="meta">
+          <div class="primary">${escapeHtml(r.zone_name || r.program_name || "Run")}</div>
+          <div class="secondary">${detail}</div>
+        </div>
+        <div class="actions">
+          <span class="pill ${STATUS_PILL[r.status] || "pill-quiet"}">${escapeHtml(label)}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  host.innerHTML = `
+    <div class="attention ${hasError ? "" : "is-warning"}">
+      <div class="attention-head">
+        <span class="attention-icon" aria-hidden="true">${hasError ? "&#9888;" : "&#9208;"}</span>
+        <h2>${items.length} run${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} a look</h2>
+      </div>
+      <p class="hint">
+        ${hasError
+          ? "A zone failed or was cut short. Check the valve and the add-on log."
+          : "These runs were skipped on purpose - no water went out."}
+      </p>
+      <div class="stack">${rows}</div>
+    </div>
+  `;
+}
+
+function renderHistoryStats(stats) {
+  const t = stats.totals;
+  el("history-timezone").textContent = stats.timezone;
+  el("history-stats").innerHTML = `
+    <div class="stat">
+      <div class="label">Water applied</div>
+      <div class="value">${fmtInches(t.inches)}</div>
+      <div class="sub">estimated, per zone</div>
+    </div>
+    <div class="stat">
+      <div class="label">Time watering</div>
+      <div class="value">${escapeHtml(fmtDuration(t.minutes))}</div>
+      <div class="sub">${t.zones} zone${t.zones === 1 ? "" : "s"} involved</div>
+    </div>
+    <div class="stat">
+      <div class="label">Runs completed</div>
+      <div class="value">${t.runs}</div>
+      <div class="sub">across ${stats.days} days</div>
+    </div>
+    <div class="stat${t.problems ? " stat-problem" : ""}">
+      <div class="label">Needs a look</div>
+      <div class="value">${t.problems}</div>
+      <div class="sub">${t.errors} error${t.errors === 1 ? "" : "s"}, ${t.skipped} skipped</div>
+    </div>
+  `;
+}
+
+function renderActivityChart(stats) {
+  const plot = el("chart-plot");
+  const days = stats.by_day;
+  const max = Math.max(...days.map((d) => d.minutes), 1);
+  const hasAny = days.some((d) => d.minutes > 0 || d.problems > 0);
+
+  if (!hasAny) {
+    plot.innerHTML = `<div class="timeline-empty">Nothing watered in the last ${stats.days} days.</div>`;
+    return;
+  }
+
+  const bars = days
+    .map((d) => {
+      const height = d.minutes > 0 ? Math.max(2, (d.minutes / max) * 100) : 2;
+      const flag = d.problems ? `<span class="chart-flag" aria-hidden="true"></span>` : "";
+      return `<div class="chart-col${d.minutes ? "" : " is-empty"}">
+        <div class="chart-bar" style="height:${height.toFixed(1)}%">${flag}</div>
+      </div>`;
+    })
+    .join("");
+
+  el("chart-peak").textContent = `peak ${fmtDuration(max)}`;
+  plot.innerHTML = `
+    <div class="chart-grid"><span style="top:0"></span><span style="top:50%"></span><span style="bottom:0"></span></div>
+    <div class="chart-bars">${bars}</div>
+    <div class="chart-axis">${days.map((d) => `<span>${d.day_of_month}</span>`).join("")}</div>
+    <div class="chart-tip" hidden></div>
+  `;
+
+  const tip = plot.querySelector(".chart-tip");
+  plot.querySelectorAll(".chart-col").forEach((col, i) => {
+    const d = days[i];
+    col.addEventListener("mouseenter", () => {
+      tip.innerHTML = `
+        <div class="tip-day">${escapeHtml(d.weekday)}, ${escapeHtml(fmtShortDate(d.date))}</div>
+        <div class="tip-row">${escapeHtml(fmtDuration(d.minutes))} &middot; ${d.runs} run${d.runs === 1 ? "" : "s"}</div>
+        ${d.problems ? `<div class="tip-problem">${d.problems} need${d.problems === 1 ? "s" : ""} a look</div>` : ""}
+      `;
+      tip.hidden = false;
+
+      // Anchor above the bar, but keep the whole tooltip inside the plot so a
+      // full-height bar doesn't push it over the caption or off the edge.
+      const bar = col.querySelector(".chart-bar").getBoundingClientRect();
+      const host = plot.getBoundingClientRect();
+      const half = tip.offsetWidth / 2;
+      const left = bar.left - host.left + bar.width / 2;
+      tip.style.left = `${Math.min(Math.max(left, half), host.width - half)}px`;
+      tip.style.top = `${Math.max(bar.top - host.top - 8, tip.offsetHeight + 2)}px`;
+    });
+    col.addEventListener("mouseleave", () => { tip.hidden = true; });
+  });
+}
+
+function fmtShortDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function dayHeading(iso) {
+  const today = new Date();
+  const date = new Date(iso);
+  const sameDay = (a, b) => a.toDateString() === b.toDateString();
+  if (sameDay(date, today)) return "Today";
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(date, yesterday)) return "Yesterday";
+  return date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+}
+
+function renderHistoryList(rows) {
   const list = el("history-list");
   if (!rows.length) {
     emptyState(list, "No runs logged yet.");
@@ -917,18 +1159,30 @@ async function loadHistoryTab() {
   }
 
   list.innerHTML = "";
+  let currentDay = null;
   rows.forEach((r) => {
-    const pillClass = STATUS_PILL[r.status] || "pill-quiet";
+    const heading = dayHeading(r.started_at);
+    if (heading !== currentDay) {
+      currentDay = heading;
+      const h = document.createElement("div");
+      h.className = "day-heading";
+      h.textContent = heading;
+      list.appendChild(h);
+    }
+
     const label = STATUS_LABEL[r.status] || r.status;
     // A skipped run never opened a valve, so its elapsed time means nothing.
     const ran = r.started_at && r.ended_at && !r.status.startsWith("skipped")
       ? fmtDuration((new Date(r.ended_at) - new Date(r.started_at)) / 60000)
       : null;
+    const time = new Date(r.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const source = r.zone_name ? escapeHtml(r.program_name || "Manual") : "Whole program";
+
     list.appendChild(
       rowItem(
         escapeHtml(r.zone_name || r.program_name || "Run"),
-        `${escapeHtml(r.program_name || "Manual")} &middot; ${fmtDateTime(r.started_at)}${ran ? ` &middot; ran ${ran}` : ""}`,
-        `<span class="pill ${pillClass}">${escapeHtml(label)}</span>`
+        `${escapeHtml(time)} &middot; ${source}${ran ? ` &middot; ran ${ran}` : ""}`,
+        `<span class="pill ${STATUS_PILL[r.status] || "pill-quiet"}">${escapeHtml(label)}</span>`
       )
     );
   });

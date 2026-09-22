@@ -15,6 +15,10 @@
   --warn-soft: #fff3da;
   --info: #1d6fa5;
   --info-soft: #e5f1fa;
+  /* Status palette - deliberately the same in light and dark, and never used
+     for anything that isn't a state. Always paired with an icon or a label. */
+  --critical: #d03b3b;
+  --status-warning: #fab219;
   --shadow: 0 1px 2px rgba(16, 32, 28, .06), 0 4px 16px rgba(16, 32, 28, .05);
   --shadow-sm: 0 1px 2px rgba(16, 32, 28, .08);
   --radius: 14px;
@@ -385,6 +389,8 @@ input[type="time"] { font-variant-numeric: tabular-nums; }
   font-variant-numeric: tabular-nums;
 }
 .stat .sub { font-size: 11px; color: var(--muted); }
+.stat-problem { border-color: var(--critical); }
+.stat-problem .value { color: var(--critical); }
 
 /* ------------------------------------------------------------- timeline */
 
@@ -466,6 +472,239 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   margin-bottom: 12px;
 }
 .notice-warn { background: var(--warn-soft); color: var(--warn); }
+
+/* --------------------------------------------------------------- modal */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 18, 15, .55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  z-index: 40;
+  overflow-y: auto;
+  animation: fade .15s ease;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, .28);
+  width: 100%;
+  max-width: 660px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  animation: modal-in .18s ease;
+}
+@keyframes modal-in { from { opacity: 0; transform: translateY(-8px); } }
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 12px;
+}
+.modal-head h2 { margin: 0; font-size: 17px; }
+.modal-sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+
+.modal-body {
+  padding: 4px 18px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-body .section:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.modal-step-note { flex: 1; font-size: 12px; color: var(--muted); }
+
+/* stepper */
+
+.stepper {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0 18px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.stepper li {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 0;
+}
+.stepper .dot {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.stepper .step-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stepper li.done .dot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.stepper li.current { color: var(--text); }
+.stepper li.current .dot { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+
+.blank-start {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+.blank-start:hover { border-color: var(--accent); background: var(--surface-2); }
+.blank-start strong { display: block; font-size: 14px; }
+.blank-start span { font-size: 12px; color: var(--muted); }
+
+.review-enabled { margin-top: 16px; }
+
+/* ---------------------------------------------------------------- chart */
+
+.chart { margin: 4px 0 0; }
+.chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.chart-plot { position: relative; }
+
+.chart-grid { position: absolute; inset: 0 0 26px 0; pointer-events: none; }
+.chart-grid span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.chart-title { display: flex; justify-content: space-between; gap: 12px; }
+.chart-peak { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.chart-bars { display: flex; align-items: flex-end; gap: 2px; height: 132px; }
+.chart-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  cursor: default;
+  position: relative;
+}
+.chart-bar {
+  position: relative;
+  width: 100%;
+  max-width: 24px;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  min-height: 2px;
+  transition: filter .12s;
+}
+.chart-col:hover .chart-bar { filter: brightness(1.15); }
+.chart-col.is-empty .chart-bar { background: var(--border); }
+
+/* Sits just above its own bar, so it points at the day it belongs to. */
+.chart-flag {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--critical);
+  border: 2px solid var(--surface);
+  box-sizing: content-box;
+}
+
+.chart-axis { display: flex; gap: 2px; margin-top: 6px; }
+.chart-axis span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+.chart-tip {
+  position: absolute;
+  z-index: 5;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px 11px;
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+.chart-tip .tip-day { font-weight: 700; margin-bottom: 2px; }
+.chart-tip .tip-row { color: var(--muted); }
+.chart-tip .tip-problem { color: var(--critical); font-weight: 600; }
+
+/* ------------------------------------------------------- attention panel */
+
+.attention {
+  background: var(--surface);
+  border: 1px solid var(--critical);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.attention.is-warning { border-color: var(--warn); }
+.attention-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.attention-head h2 { margin: 0; font-size: 15px; }
+.attention-icon { font-size: 15px; line-height: 1; }
+.attention .hint { margin-bottom: 12px; }
+
+.day-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin: 14px 0 2px;
+}
+.day-heading:first-child { margin-top: 0; }
 
 /* -------------------------------------------------------------- toasts */
 

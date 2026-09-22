@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0
+
+Programs are built in a guided modal; History became a dashboard.
+
+- **Programs tab leads with your programs.** The page is now just the list plus
+  a "New program" button - no permanently-open builder taking up the screen.
+- **The builder is a four-step modal**: pick a growth stage, set the schedule
+  and cycles, choose zones, then review the timeline and save. Editing skips
+  the first step. Each step is validated before you can move on, and saving
+  jumps back to anything left incomplete.
+- **History is now an overview.** Stat tiles for water applied, time watering,
+  runs completed and anything needing a look; a 14-day bar chart of daily
+  watering with hover detail; and runs grouped under Today / Yesterday / date.
+- **Problems are called out.** Errors and skips get a panel at the top of the
+  History tab, a red count tile, and a marker on the affected day in the chart -
+  each with a written label, never colour alone.
+- New `GET /api/history/stats` backs the overview, bucketing runs into local
+  days using the add-on's configured timezone.
+
 ## 0.2.1
 
 Follows Home Assistant's timezone, and handles zone failures properly.
