@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
@@ -24,6 +25,7 @@ async def status():
     delay = await run_in_threadpool(storage.get_rain_delay)
     active = await rain_delay_active()
     return {
+        "version": os.environ.get("APP_VERSION", "dev"),
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},
         "current_runs": current_runs,
         "next_events": next_events(),

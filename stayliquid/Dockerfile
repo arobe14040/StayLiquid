@@ -13,8 +13,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY web ./web
 
+# Supervisor passes the version from config.yaml as a build arg, so the running
+# app can report exactly which build it is without duplicating the number here.
+ARG BUILD_VERSION=dev
+
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    APP_VERSION=$BUILD_VERSION
 
 EXPOSE 8099
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1
+
+Fixes the frontend serving a stale copy of itself after an update.
+
+- **Static files are now sent with `Cache-Control: no-cache`.** Starlette was
+  sending only an ETag and last-modified date. With no explicit freshness
+  directive a browser may apply heuristic caching and keep using the old
+  `app.js` without ever asking whether it changed - so an add-on update could
+  land while the UI stayed exactly as it was. Revalidation still returns a 304
+  for an unchanged file, so this costs a round trip, not bandwidth.
+- **The running version is now visible**, next to the title in the UI and in
+  the add-on's startup log line, so "did my update actually land?" has an
+  answer that doesn't depend on the browser.
+
 ## 0.3.0
 
 Programs are built in a guided modal; History became a dashboard.

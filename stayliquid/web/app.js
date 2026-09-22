@@ -206,6 +206,8 @@ async function loadDashboard() {
     return;
   }
 
+  if (status.version) el("app-version").textContent = `v${status.version}`;
+
   const pill = el("raindelay-pill");
   if (status.rain_delay.active) {
     pill.hidden = false;

@@ -1,9 +1,12 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+
+VERSION = os.environ.get("APP_VERSION", "dev")
 
 from . import runner, storage
 from .api.routes_programs import router as programs_router
@@ -25,8 +28,8 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     sync_all()
     log.info(
-        "StayLiquid ready - %d job(s) scheduled in %s",
-        len(scheduler.get_jobs()), timezone_name,
+        "StayLiquid %s ready - %d job(s) scheduled in %s",
+        VERSION, len(scheduler.get_jobs()), timezone_name,
     )
     yield
 
@@ -46,9 +49,29 @@ app.include_router(programs_router, prefix="/api")
 app.include_router(status_router, prefix="/api")
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Serve the frontend with `Cache-Control: no-cache`.
+
+    Starlette sends only last-modified and an ETag. With no explicit freshness
+    directive a browser is free to apply heuristic caching, so after an add-on
+    update it can keep serving the old app.js from cache without ever asking
+    whether it changed - and because Ingress runs the add-on in an iframe, a
+    hard refresh of the Home Assistant page doesn't clear it either.
+
+    "no-cache" means revalidate, not don't store: the ETag still turns an
+    unchanged file into a 304 with no body, so this costs a round trip, not
+    bandwidth.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 # Ingress serves this add-on under a dynamic sub-path, so the frontend must
 # only ever use relative fetch() URLs (e.g. "api/status", not "/api/status").
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+app.mount("/", RevalidatingStaticFiles(directory="web", html=True), name="web")
 
 
 if __name__ == "__main__":
