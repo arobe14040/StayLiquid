@@ -895,13 +895,17 @@ const STATUS_PILL = {
   completed: "pill-quiet",
   running: "pill-on",
   error: "pill-danger",
+  interrupted: "pill-warn",
   skipped_rain_delay: "pill-warn",
+  skipped_unavailable: "pill-warn",
 };
 const STATUS_LABEL = {
   completed: "Completed",
   running: "Running",
   error: "Error",
+  interrupted: "Interrupted - add-on restarted",
   skipped_rain_delay: "Skipped - rain delay",
+  skipped_unavailable: "Skipped - zone unavailable",
 };
 
 async function loadHistoryTab() {
@@ -916,7 +920,8 @@ async function loadHistoryTab() {
   rows.forEach((r) => {
     const pillClass = STATUS_PILL[r.status] || "pill-quiet";
     const label = STATUS_LABEL[r.status] || r.status;
-    const ran = r.started_at && r.ended_at
+    // A skipped run never opened a valve, so its elapsed time means nothing.
+    const ran = r.started_at && r.ended_at && !r.status.startsWith("skipped")
       ? fmtDuration((new Date(r.ended_at) - new Date(r.started_at)) / 60000)
       : null;
     list.appendChild(

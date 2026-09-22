@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.1
+
+Follows Home Assistant's timezone, and handles zone failures properly.
+
+- **Timezone is no longer hardcoded.** The scheduler asks Supervisor for Home
+  Assistant's configured timezone at startup, falling back to the injected `TZ`
+  and then the container's local zone. Cycle times now mean what they say
+  wherever the system is installed.
+- **Unavailable zones are skipped** rather than "watered" into the void, logged
+  as `skipped_unavailable`, without the rest of the program being abandoned.
+- **Failed turn-offs are retried** 4 times before giving up, and a run whose
+  valve couldn't be closed is logged as an error with a loud log line.
+- **A failed turn-on no longer waits out its duration** doing nothing.
+- **Open valves are closed on shutdown**, before the run tasks are torn down,
+  and those runs are logged `interrupted`.
+- **Valves left open by a hard kill or power loss are closed at next startup** -
+  any run still marked `running` is reconciled by actually closing that zone.
+  Zones switched on by hand outside the add-on are untouched.
+- Runs left `running` by an unclean stop no longer sit in the history forever.
+
 ## 0.2.0
 
 Multiple watering cycles per day, and a rebuilt UI.

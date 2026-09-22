@@ -10,6 +10,7 @@ import os
 import httpx
 
 BASE_URL = "http://supervisor/core/api"
+SUPERVISOR_URL = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
 _headers = {
@@ -21,6 +22,20 @@ _headers = {
 # platform type for irrigation/water valves; switch.* covers the very common
 # case of a sprinkler relay board exposed as plain switches.
 ZONE_DOMAINS = ("switch", "valve")
+
+
+async def get_supervisor_timezone() -> str | None:
+    """Home Assistant's configured timezone, e.g. "America/New_York".
+
+    Supervisor also injects a TZ environment variable, but it's baked in when
+    the container is created and is never refreshed - so if you change the
+    timezone in Home Assistant, TZ keeps the old value until the add-on is
+    rebuilt. /info is the live answer, so prefer it and fall back to TZ.
+    """
+    async with httpx.AsyncClient(base_url=SUPERVISOR_URL, headers=_headers, timeout=10) as client:
+        resp = await client.get("/info")
+        resp.raise_for_status()
+        return resp.json().get("data", {}).get("timezone")
 
 
 async def get_zone_candidate_entities() -> list[dict]:

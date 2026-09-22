@@ -5,11 +5,11 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import storage
+from . import runner, storage
 from .api.routes_programs import router as programs_router
 from .api.routes_status import router as status_router
 from .api.routes_zones import router as zones_router
-from .scheduler import scheduler, sync_all
+from .scheduler import apply_timezone, scheduler, sync_all
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("stayliquid")
@@ -18,11 +18,23 @@ log = logging.getLogger("stayliquid")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     storage.init_db()
+
+    await runner.recover_orphaned_runs()
+
+    timezone_name = await apply_timezone()
     scheduler.start()
     sync_all()
-    log.info("StayLiquid ready - %d program(s) scheduled", len(scheduler.get_jobs()))
+    log.info(
+        "StayLiquid ready - %d job(s) scheduled in %s",
+        len(scheduler.get_jobs()), timezone_name,
+    )
     yield
+
+    # Stop taking on new work, then close anything already open. This has to
+    # happen here, while the event loop is still running: once shutdown cancels
+    # the run tasks, their own cleanup can no longer await a turn-off call.
     scheduler.shutdown(wait=False)
+    await runner.stop_all("add-on shutting down")
 
 
 app = FastAPI(title="StayLiquid", lifespan=lifespan)

@@ -335,17 +335,51 @@ def finish_run(run_id: int, status: str) -> None:
         )
 
 
-def log_skip(program_id: int, program_name: str, reason: str) -> None:
+def log_skip(
+    program_id: int | None,
+    program_name: str,
+    reason: str,
+    zone_id: int | None = None,
+    zone_name: str | None = None,
+    trigger_source: str = "scheduled",
+) -> None:
+    """Record a run that never started. Zone details are omitted for a
+    whole-program skip (rain delay) and filled in for a single-zone one."""
     ts = now_iso()
     with tx() as conn:
         conn.execute(
             """
             INSERT INTO run_log (program_id, program_name, zone_id, zone_name,
                                   trigger_source, started_at, ended_at, status)
-            VALUES (?, ?, NULL, NULL, 'scheduled', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (program_id, program_name, ts, ts, reason),
+            (program_id, program_name, zone_id, zone_name, trigger_source, ts, ts, reason),
         )
+
+
+def list_orphaned_runs() -> list[dict]:
+    """Runs still marked 'running' - only possible at startup, when they belong
+    to a process that died without finishing them. The valve may well still be
+    open, so the entity_id comes along (NULL if the zone was since deleted)."""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT r.id, r.zone_id, r.zone_name, z.entity_id
+        FROM run_log r
+        LEFT JOIN zones z ON z.id = r.zone_id
+        WHERE r.status = 'running'
+        """
+    ).fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+def close_orphaned_runs() -> int:
+    with tx() as conn:
+        cur = conn.execute(
+            "UPDATE run_log SET status = 'interrupted', ended_at = ? WHERE status = 'running'",
+            (now_iso(),),
+        )
+        return cur.rowcount
 
 
 def list_history(limit: int = 50) -> list[dict]:

@@ -99,6 +99,41 @@ nothing is deleted or disabled, the schedule just resumes normally once the
 delay expires (or you hit Clear). Manual "Run now" and zone test-fires
 ignore the delay on purpose, so you can still hand-water if needed.
 
+## Timezone
+
+Cycle times are local times: "08:00" means 8am where the sprinklers are. On
+startup the add-on asks Supervisor for Home Assistant's configured timezone
+and schedules in it, so changing the timezone in Home Assistant and restarting
+the add-on is all that's needed. If Supervisor can't be reached it falls back
+to the `TZ` variable Supervisor injects, then to the container's local zone.
+The zone it settled on is logged at startup:
+
+```
+StayLiquid ready - 3 job(s) scheduled in America/New_York
+```
+
+## When things go wrong
+
+A stuck-open valve is the expensive failure, so closing one is treated as more
+important than opening one.
+
+| What happens | What the add-on does |
+|---|---|
+| Zone entity is `unavailable` in HA | Skipped before the valve is touched, logged `skipped_unavailable`. Other zones in the program continue. |
+| The turn-on call fails | That zone is logged `error` and the wait is abandoned immediately (it doesn't sit there for 40 minutes doing nothing). The rest of the program continues. |
+| The turn-off call fails | Retried 4 times, 5 seconds apart. If every attempt fails the run is logged `error` and a `GAVE UP closing ...` line is written to the log - worth an eye on. |
+| HA or Supervisor restarts mid-run | The wait is unaffected; the turn-off at the end simply happens once HA answers again. |
+| The add-on is stopped or restarted mid-run | Open valves are closed during shutdown, before the run tasks are torn down, and their runs are logged `interrupted`. |
+| The add-on is killed outright, or the host loses power | Nothing can run at that moment, so a valve can be left open. On next startup any run still marked `running` is treated as exactly that: the add-on closes that zone's valve and logs the run `interrupted`. Only zones this add-on opened are touched, so a zone you switched on by hand is left alone. |
+
+Two things it deliberately does **not** do. It doesn't verify that a valve
+physically responded - Home Assistant accepts a service call for an entity
+whose device is offline, so a zone can report success without water moving; the
+`unavailable` pre-check catches the common case but not a dead solenoid. And it
+has no hardware watchdog: if the whole machine is off, nothing closes a valve
+until it comes back. For a system that can flood something, a mechanical timer
+or a normally-closed valve is the right backstop, not software.
+
 ## Data & backups
 
 Everything (zones, programs, rain-delay state, run history) lives in a
@@ -110,6 +145,9 @@ backups.
 
 - No weather API integration (planned as a future, opt-in feature - the
   manual rain-delay buttons are intentional for now).
+- No confirmation that a valve physically opened (see "When things go wrong").
+- Rain delay is checked when a program starts, not before each zone, so a
+  delay set mid-program won't stop the zones already under way.
 - No notifications (persistent notification / mobile push on run
   start/finish, or on error) yet.
 - No per-zone flow-rate/water-usage tracking.

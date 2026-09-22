@@ -1,13 +1,51 @@
+import logging
+import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import storage
+from . import ha_client, storage
 from .runner import run_program
 
-scheduler = AsyncIOScheduler(timezone="America/New_York")
+log = logging.getLogger("stayliquid.scheduler")
+
+# Timezone is applied in apply_timezone() before the scheduler starts. Left
+# unset here, APScheduler would resolve it from TZ, which is close but can be
+# stale - see ha_client.get_supervisor_timezone.
+scheduler = AsyncIOScheduler()
+
+
+async def apply_timezone() -> str:
+    """Point the scheduler at Home Assistant's timezone. "08:00" has to mean
+    8am where the sprinklers are, not wherever the container thinks it is."""
+    candidates = []
+    try:
+        supervisor_tz = await ha_client.get_supervisor_timezone()
+        if supervisor_tz:
+            candidates.append(supervisor_tz)
+    except Exception:
+        log.warning("Could not read the timezone from Supervisor; falling back to TZ.")
+
+    env_tz = os.environ.get("TZ")
+    if env_tz:
+        candidates.append(env_tz)
+
+    for name in candidates:
+        try:
+            scheduler.configure(timezone=ZoneInfo(name))
+            log.info("Scheduling in %s", name)
+            return name
+        except Exception:
+            log.warning("'%s' is not a timezone name we can use.", name)
+
+    # APScheduler's own default is the container's local zone, which Supervisor
+    # sets from Home Assistant anyway - so this is a reasonable last resort.
+    fallback = str(scheduler.timezone)
+    log.warning("Falling back to the container's local timezone (%s).", fallback)
+    return fallback
 
 
 def _job_prefix(program_id: int) -> str:
