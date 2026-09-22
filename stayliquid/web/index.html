@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>StayLiquid</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <h1>&#128167; StayLiquid</h1>
+    <div id="raindelay-banner" class="raindelay-banner" hidden></div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="zones">Zones</button>
+    <button class="tab" data-tab="programs">Programs</button>
+    <button class="tab" data-tab="history">History</button>
+  </nav>
+
+  <main>
+
+    <section id="tab-dashboard" class="tab-panel active">
+      <div class="card">
+        <h2>Rain delay</h2>
+        <div class="btn-row">
+          <button class="btn" data-delay="24">24h</button>
+          <button class="btn" data-delay="48">48h</button>
+          <button class="btn" data-delay="72">72h</button>
+          <button class="btn" id="custom-delay-btn">Custom&#8230;</button>
+          <button class="btn btn-ghost" id="clear-delay-btn">Clear</button>
+        </div>
+        <div id="custom-delay-row" class="btn-row" hidden>
+          <input type="number" id="custom-delay-hours" min="1" placeholder="Hours" />
+          <button class="btn" id="apply-custom-delay">Apply</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Currently running</h2>
+        <div id="current-runs" class="list">Nothing running right now.</div>
+      </div>
+
+      <div class="card">
+        <h2>Upcoming</h2>
+        <div id="next-events" class="list">No upcoming runs scheduled.</div>
+      </div>
+    </section>
+
+    <section id="tab-zones" class="tab-panel">
+      <div class="card">
+        <h2>Add a zone</h2>
+        <div class="form-row">
+          <select id="new-zone-entity"><option>Loading entities&#8230;</option></select>
+          <input type="text" id="new-zone-name" placeholder="Zone name (e.g. Front lawn)" />
+          <button class="btn" id="add-zone-btn">Add zone</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Zones</h2>
+        <div id="zones-list" class="list">Loading&#8230;</div>
+      </div>
+    </section>
+
+    <section id="tab-programs" class="tab-panel">
+      <div class="card">
+        <h2>New program</h2>
+        <div class="form-grid" id="program-form">
+          <label>Name
+            <input type="text" id="pf-name" placeholder="e.g. Front lawn - summer" />
+          </label>
+          <label>Start from preset
+            <select id="pf-preset"><option value="custom">Custom (blank)</option></select>
+          </label>
+          <label>Schedule type
+            <select id="pf-schedule-type">
+              <option value="weekdays">Specific days of the week</option>
+              <option value="interval">Every N days</option>
+            </select>
+          </label>
+          <div id="pf-weekdays-row" class="weekday-picker">
+            <label><input type="checkbox" value="mon" /> Mon</label>
+            <label><input type="checkbox" value="tue" /> Tue</label>
+            <label><input type="checkbox" value="wed" /> Wed</label>
+            <label><input type="checkbox" value="thu" /> Thu</label>
+            <label><input type="checkbox" value="fri" /> Fri</label>
+            <label><input type="checkbox" value="sat" /> Sat</label>
+            <label><input type="checkbox" value="sun" /> Sun</label>
+          </div>
+          <label id="pf-interval-row" hidden>Every
+            <input type="number" id="pf-interval-days" min="1" value="2" /> days
+          </label>
+          <label>Start time
+            <input type="time" id="pf-start-time" value="06:00" />
+          </label>
+          <label>Zone run mode
+            <select id="pf-run-mode">
+              <option value="sequential">One zone at a time</option>
+              <option value="simultaneous">All zones together</option>
+            </select>
+          </label>
+          <label class="checkbox-label"><input type="checkbox" id="pf-enabled" checked /> Enabled</label>
+        </div>
+
+        <h3>Zones in this program</h3>
+        <div id="pf-zones-list" class="list">No zones added yet.</div>
+        <div class="form-row">
+          <select id="pf-add-zone-select"></select>
+          <input type="number" id="pf-add-zone-duration" min="0" step="0.5" placeholder="Minutes" />
+          <button class="btn" id="pf-add-zone-btn">Add to program</button>
+        </div>
+
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn btn-primary" id="pf-save-btn">Save program</button>
+          <button class="btn btn-ghost" id="pf-cancel-btn" hidden>Cancel edit</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Programs</h2>
+        <div id="programs-list" class="list">Loading&#8230;</div>
+      </div>
+    </section>
+
+    <section id="tab-history" class="tab-panel">
+      <div class="card">
+        <h2>Recent runs</h2>
+        <div id="history-list" class="list">Loading&#8230;</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
