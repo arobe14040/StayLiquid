@@ -4,15 +4,19 @@
 
 - **Zones** - wrap any `switch.*` or `valve.*` entity that controls a
   sprinkler valve as a named zone.
-- **Programs** - a schedule (specific weekdays, or "every N days") plus an
-  ordered list of zones with a duration each. Each program can be built from
-  a lawn growth-stage preset or fully custom, and runs its zones either
-  **sequentially** (one at a time - typical for most residential water
-  pressure/flow) or **simultaneously** (all at once).
+- **Programs** - a schedule (specific weekdays, or "every N days"), one or
+  more **daily cycles**, and an ordered list of zones with a duration each.
+  Each program can be built from a lawn growth-stage preset or fully custom,
+  and runs its zones either **sequentially** (one at a time - typical for
+  most residential water pressure/flow) or **simultaneously** (all at once).
+- **Cycles** - one cycle waters every zone in the program once. A seedling
+  program might run three cycles a day; established turf runs one. The
+  Programs tab previews exactly when each zone starts and warns you if one
+  cycle would still be running when the next is due to begin.
 - **Dashboard** - what's running right now, the next few scheduled runs, and
-  rain-delay buttons (24h / 48h / 72h / custom). A rain delay suspends every
-  *scheduled* run until it expires; manual "Run now" / zone test-fires still
-  work during a delay.
+  rain-delay buttons (12h / 24h / 48h / 72h / custom). A rain delay suspends
+  every *scheduled* run until it expires; manual "Run now" / zone test-fires
+  still work during a delay.
 - **History** - a log of every run: which zone, which program, when, and
   whether it completed, errored, or was skipped for rain delay.
 
@@ -28,29 +32,54 @@ for now, by design.
    dropdown (only `switch.*`/`valve.*` entities show up) and give it a
    name. Use **Run** with a short duration to test that the right valve
    actually turns on before you build a schedule around it.
-4. **Programs tab** - click a growth-stage preset to prefill a sensible
-   schedule and duration, adjust as needed, add your zones with a duration
-   each, and save. Repeat for as many programs as you want (e.g. one per
-   zone group, or one per season).
+4. **Programs tab** - click a growth-stage preset. It fills in the cycle
+   times, the per-zone runtime, and adds every zone you've configured, then
+   shows a preview of exactly when each zone will start. Adjust anything you
+   like, name it, and save. Repeat for as many programs as you want (e.g. one
+   per zone group, or one per growth stage as the lawn matures).
 5. Check the **Dashboard** to confirm the next run times look right.
 
 ## Growth-stage presets
 
-Presets are just starting points - picking one prefills the program form,
-but the program you save is a fully independent, editable schedule. Default
-presets assume a cool-season New England lawn:
+Presets are starting points - picking one prefills the program builder (cycle
+times, per-zone runtime, how often it repeats, and every zone you've
+configured), but the program you save is a fully independent, editable
+schedule. The four stages walk a new lawn from seed to established turf:
 
-| Preset | Typical window | Schedule |
-|---|---|---|
-| New Seed / Germination | Apr-May or late Aug-Sep | Daily, short duration |
-| Establishment | 2-6 weeks after germination | Every other day |
-| Active Growth | May-Jun, Sep-Oct | 2x/week |
-| Peak Summer | Jul-Aug | 3x/week, deeper watering |
-| Dormant / Winter Shutdown | Nov-Mar | Created disabled |
+| Stage | When | Per zone | Cycles/day | Water per cycle |
+|---|---|---|---|---|
+| 1 - Before Germination | Seed down until sprouts (7-14 days) | 10 min | 3 (8:00, 11:30, 15:00) | ~0.07" |
+| 2 - Sprouting | First sprouts through ~week 3 | 15 min | 2 (8:00, 13:00) | ~0.10" |
+| 3 - Young Grass | ~Weeks 3-8, after the first mow | 40 min | 1 (6:00) | ~0.27" |
+| 4 - Rooting In | Week 8 onward - your normal season | 75 min | 1 (5:00), every 3rd day | ~0.50" |
 
-If you're on warm-season grass, the seasons run in the opposite direction -
-create custom programs instead, or use the presets as a rough template and
-shift the months.
+The progression is deliberate: early stages keep the seed bed damp with
+frequent short cycles, then taper to long infrequent soaks that drive roots
+deeper and make the lawn drought-tolerant.
+
+### How the zone start times are worked out
+
+Cycle times are when the *cycle* starts. In sequential mode each zone starts
+when the previous one finishes, so a 4-zone Stage 1 program looks like this:
+
+| Cycle | Zone 1 | Zone 2 | Zone 3 | Zone 4 |
+|---|---|---|---|---|
+| Morning | 8:00 | 8:10 | 8:20 | 8:30 |
+| Midday | 11:30 | 11:40 | 11:50 | 12:00 |
+| Afternoon | 3:00 | 3:10 | 3:20 | 3:30 |
+
+Add or remove zones, change a duration, or switch to simultaneous mode and
+the preview recalculates - so the schedule scales to however many zones you
+actually have. In simultaneous mode every zone starts at the cycle time.
+
+### Water estimates
+
+The inch figures assume a precipitation rate of **0.4 in/hr**, typical for a
+residential pop-up spray zone with head-to-head coverage. That's what makes
+10 minutes ≈ 0.07" and 75 minutes ≈ 0.5". If you catch-cup your own zones and
+measure something different, the estimates scale linearly - change
+`PRECIP_RATE_IN_PER_HR` in `app/presets.py` and `PRECIP_RATE` in `web/app.js`
+to match. The estimates are advisory only; they never affect run times.
 
 ## Sequential vs. simultaneous
 
@@ -63,7 +92,7 @@ Set per-program in the **Zone run mode** field:
 
 ## Rain delay
 
-The three preset buttons (24h/48h/72h) and the custom-hours field all do the
+The preset buttons (12h/24h/48h/72h) and the custom-hours field all do the
 same thing: set a single "delay until" timestamp. While active, every
 *scheduled* program run is skipped and logged as `skipped_rain_delay` -
 nothing is deleted or disabled, the schedule just resumes normally once the

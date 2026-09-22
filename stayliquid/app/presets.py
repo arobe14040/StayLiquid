@@ -1,81 +1,112 @@
 """
-Growth-stage preset templates.
+Lawn growth-stage presets.
 
-These are just starting points for a new Program - picking one prefills the
-program creation form (schedule + a default duration per zone), and the user
-edits from there. Nothing here is "live"; once a program is created it's a
-normal, independently-editable row in the database.
+Picking a preset prefills the program builder - cycle times, per-zone runtime,
+and how often it repeats. Nothing here stays "live": once a program is created
+it's an ordinary editable row in the database.
 
-Tuned for a cool-season lawn (fescue / Kentucky bluegrass), which is the
-default for New England. If you're on warm-season grass (Bermuda, zoysia,
-etc.) these defaults run backwards - swap peak_summer and dormant, and shift
-germination to early summer instead of spring/fall.
+Water estimates assume a precipitation rate of ~0.4 in/hr, typical for a
+residential pop-up spray zone with head-to-head coverage. If you catch-cup your
+own rate and it differs, everything scales linearly from PRECIP_RATE_IN_PER_HR.
 """
+
+PRECIP_RATE_IN_PER_HR = 0.4
+
+
+def inches_for(minutes: float) -> float:
+    return round(minutes / 60 * PRECIP_RATE_IN_PER_HR, 2)
+
 
 GROWTH_STAGE_PRESETS = [
     {
-        "id": "germination",
-        "name": "New Seed / Germination",
-        "typical_window": "Apr\u2013May or late Aug\u2013Sep",
-        "note": "Frequent, light watering to keep the top inch of soil consistently moist.",
+        "id": "pre_germination",
+        "stage": 1,
+        "name": "Before Germination",
+        "tagline": "Seed is down, nothing has sprouted yet",
+        "typical_window": "Day 0 until you see sprouts - usually 7-14 days",
+        "goal": (
+            "Keep the top quarter-inch of soil damp around the clock. Seed that "
+            "dries out once is dead seed, so this stage trades depth for frequency."
+        ),
+        "duration_minutes": 10,
+        "cycle_times": ["08:00", "11:30", "15:00"],
         "schedule_type": "weekdays",
         "weekdays": "mon,tue,wed,thu,fri,sat,sun",
         "interval_days": None,
-        "start_time": "06:00",
         "run_mode": "sequential",
-        "default_duration_minutes": 6,
     },
     {
-        "id": "establishment",
-        "name": "Establishment",
-        "typical_window": "2\u20136 weeks after germination",
-        "note": "Roots are developing - taper frequency, extend duration slightly.",
+        "id": "sprouting",
+        "stage": 2,
+        "name": "Sprouting",
+        "tagline": "Green fuzz is up, roots are hair-thin",
+        "typical_window": "From first sprouts through about week 3",
+        "goal": (
+            "Still shallow-rooted and still easy to kill, but the seed coat is open. "
+            "Back off to twice a day and water a little longer each time."
+        ),
+        "duration_minutes": 15,
+        "cycle_times": ["08:00", "13:00"],
+        "schedule_type": "weekdays",
+        "weekdays": "mon,tue,wed,thu,fri,sat,sun",
+        "interval_days": None,
+        "run_mode": "sequential",
+    },
+    {
+        "id": "young_grass",
+        "stage": 3,
+        "name": "Young Grass",
+        "tagline": "Mowable, but not established",
+        "typical_window": "Roughly weeks 3-8, after the first mow",
+        "goal": (
+            "Roots are reaching for water now, so give them a reason to go down. "
+            "One longer soak a day beats several sips."
+        ),
+        "duration_minutes": 40,
+        "cycle_times": ["06:00"],
+        "schedule_type": "weekdays",
+        "weekdays": "mon,tue,wed,thu,fri,sat,sun",
+        "interval_days": None,
+        "run_mode": "sequential",
+    },
+    {
+        "id": "rooting_in",
+        "stage": 4,
+        "name": "Rooting In",
+        "tagline": "Established turf, training roots deeper",
+        "typical_window": "Week 8 onward - this is your normal season schedule",
+        "goal": (
+            "Deep and infrequent is the whole game. Long runs every third day push "
+            "roots down and make the lawn far more drought-tolerant."
+        ),
+        "duration_minutes": 75,
+        "cycle_times": ["05:00"],
         "schedule_type": "interval",
         "weekdays": None,
-        "interval_days": 2,
-        "start_time": "05:30",
+        "interval_days": 3,
         "run_mode": "sequential",
-        "default_duration_minutes": 12,
-    },
-    {
-        "id": "active_growth",
-        "name": "Active Growth (Spring/Fall)",
-        "typical_window": "May\u2013Jun and Sep\u2013Oct",
-        "note": "Normal maintenance watering for established, healthy turf.",
-        "schedule_type": "weekdays",
-        "weekdays": "mon,thu",
-        "interval_days": None,
-        "start_time": "05:00",
-        "run_mode": "sequential",
-        "default_duration_minutes": 20,
-    },
-    {
-        "id": "peak_summer",
-        "name": "Peak Summer / Heat Stress",
-        "typical_window": "Jul\u2013Aug",
-        "note": "Deep, less-frequent watering encourages deeper root growth and heat tolerance.",
-        "schedule_type": "weekdays",
-        "weekdays": "mon,wed,fri",
-        "interval_days": None,
-        "start_time": "04:30",
-        "run_mode": "sequential",
-        "default_duration_minutes": 30,
-    },
-    {
-        "id": "dormant",
-        "name": "Dormant / Winter Shutdown",
-        "typical_window": "Nov\u2013Mar",
-        "note": "Created disabled by default - enable manually if you get an unusual dry spell.",
-        "schedule_type": "weekdays",
-        "weekdays": "",
-        "interval_days": None,
-        "start_time": "06:00",
-        "run_mode": "sequential",
-        "default_duration_minutes": 0,
-        "default_enabled": False,
     },
 ]
 
 
+def _decorate(preset: dict) -> dict:
+    """Add the derived numbers the UI shows on each preset card."""
+    minutes = preset["duration_minutes"]
+    cycles = len(preset["cycle_times"])
+    per_cycle = inches_for(minutes)
+    return {
+        **preset,
+        "cycles_per_day": cycles,
+        "inches_per_cycle": per_cycle,
+        "inches_per_day": round(per_cycle * cycles, 2),
+        "precip_rate_in_per_hr": PRECIP_RATE_IN_PER_HR,
+    }
+
+
+def list_presets() -> list[dict]:
+    return [_decorate(p) for p in GROWTH_STAGE_PRESETS]
+
+
 def get_preset(preset_id: str) -> dict | None:
-    return next((p for p in GROWTH_STAGE_PRESETS if p["id"] == preset_id), None)
+    preset = next((p for p in GROWTH_STAGE_PRESETS if p["id"] == preset_id), None)
+    return _decorate(preset) if preset else None

@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS programs (
     weekdays TEXT,                                -- comma list: mon,tue,wed,thu,fri,sat,sun
     interval_days INTEGER,                         -- used when schedule_type = 'interval'
     anchor_date TEXT,                              -- ISO date the interval counts from
-    start_time TEXT NOT NULL,                      -- "HH:MM", 24h
+    start_times TEXT NOT NULL,                     -- comma list of "HH:MM", one per daily cycle
     run_mode TEXT NOT NULL DEFAULT 'sequential',    -- 'sequential' | 'simultaneous'
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
@@ -84,10 +84,51 @@ def get_conn():
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
+    _migrate_to_start_times(conn)
     conn.execute(
         "INSERT OR IGNORE INTO rain_delay (id, until) VALUES (1, NULL)"
     )
     conn.commit()
+
+
+def _migrate_to_start_times(conn) -> None:
+    """Programs used to hold a single start_time; they now hold a comma list of
+    cycle times. Rebuild the table (the standard SQLite dance, since you can't
+    rename or re-constrain a column in place) and fold the old value in as the
+    program's first cycle."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(programs)").fetchall()}
+    if "start_time" not in columns or "start_times" in columns:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        CREATE TABLE programs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            stage TEXT,
+            schedule_type TEXT NOT NULL DEFAULT 'weekdays',
+            weekdays TEXT,
+            interval_days INTEGER,
+            anchor_date TEXT,
+            start_times TEXT NOT NULL,
+            run_mode TEXT NOT NULL DEFAULT 'sequential',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO programs_new
+            (id, name, stage, schedule_type, weekdays, interval_days, anchor_date,
+             start_times, run_mode, enabled, created_at, updated_at)
+        SELECT id, name, stage, schedule_type, weekdays, interval_days, anchor_date,
+               start_time, run_mode, enabled, created_at, updated_at
+        FROM programs;
+        DROP TABLE programs;
+        """
+    )
+    conn.execute("ALTER TABLE programs_new RENAME TO programs")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 @contextmanager
@@ -150,22 +191,30 @@ def delete_zone(zone_id: int) -> None:
 
 # ---- programs ---------------------------------------------------------------
 
+def join_times(value) -> str:
+    """Cycle times live in one column as "08:00,11:30,15:00". Callers hand us
+    either that string or a list, so normalise and keep them in order."""
+    times = value.split(",") if isinstance(value, str) else list(value or [])
+    return ",".join(sorted(t.strip() for t in times if t and t.strip()))
+
+
+def _hydrate_program(row: sqlite3.Row) -> dict:
+    program = row_to_dict(row)
+    program["start_times"] = [t for t in (program.get("start_times") or "").split(",") if t]
+    program["zones"] = list_program_zones(program["id"])
+    return program
+
+
 def list_programs() -> list[dict]:
     conn = get_conn()
-    programs = [row_to_dict(r) for r in conn.execute("SELECT * FROM programs ORDER BY name").fetchall()]
-    for p in programs:
-        p["zones"] = list_program_zones(p["id"])
-    return programs
+    rows = conn.execute("SELECT * FROM programs ORDER BY name").fetchall()
+    return [_hydrate_program(r) for r in rows]
 
 
 def get_program(program_id: int) -> dict | None:
     conn = get_conn()
     row = conn.execute("SELECT * FROM programs WHERE id = ?", (program_id,)).fetchone()
-    if not row:
-        return None
-    program = row_to_dict(row)
-    program["zones"] = list_program_zones(program_id)
-    return program
+    return _hydrate_program(row) if row else None
 
 
 def list_program_zones(program_id: int) -> list[dict]:
@@ -191,13 +240,13 @@ def create_program(data: dict) -> dict:
             """
             INSERT INTO programs
                 (name, stage, schedule_type, weekdays, interval_days, anchor_date,
-                 start_time, run_mode, enabled, created_at, updated_at)
+                 start_times, run_mode, enabled, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"], data.get("stage", "custom"), data["schedule_type"],
                 data.get("weekdays"), data.get("interval_days"),
-                data.get("anchor_date", ts[:10]), data["start_time"],
+                data.get("anchor_date") or ts[:10], join_times(data["start_times"]),
                 data.get("run_mode", "sequential"), int(data.get("enabled", True)),
                 ts, ts,
             ),
@@ -218,12 +267,12 @@ def update_program(program_id: int, data: dict) -> dict | None:
             """
             UPDATE programs SET
                 name = ?, stage = ?, schedule_type = ?, weekdays = ?, interval_days = ?,
-                anchor_date = ?, start_time = ?, run_mode = ?, enabled = ?, updated_at = ?
+                anchor_date = ?, start_times = ?, run_mode = ?, enabled = ?, updated_at = ?
             WHERE id = ?
             """,
             (
                 merged["name"], merged["stage"], merged["schedule_type"], merged["weekdays"],
-                merged["interval_days"], merged["anchor_date"], merged["start_time"],
+                merged["interval_days"], merged["anchor_date"], join_times(merged["start_times"]),
                 merged["run_mode"], int(merged["enabled"]), now_iso(), program_id,
             ),
         )

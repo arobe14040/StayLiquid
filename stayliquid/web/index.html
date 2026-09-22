@@ -9,131 +9,231 @@
 <body>
 <div class="app">
 
-  <header>
-    <h1>&#128167; StayLiquid</h1>
-    <div id="raindelay-banner" class="raindelay-banner" hidden></div>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2.2c4 4.7 6.3 8 6.3 10.9a6.3 6.3 0 0 1-12.6 0C5.7 10.2 8 6.9 12 2.2z" />
+      </svg>
+      <div class="brand-text">
+        <h1>StayLiquid</h1>
+        <p>Sprinkler scheduling by lawn growth stage</p>
+      </div>
+    </div>
+    <div id="raindelay-pill" class="pill pill-warn" hidden></div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="dashboard">Dashboard</button>
-    <button class="tab" data-tab="zones">Zones</button>
-    <button class="tab" data-tab="programs">Programs</button>
-    <button class="tab" data-tab="history">History</button>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
+    <button class="tab" data-tab="zones" role="tab">Zones</button>
+    <button class="tab" data-tab="programs" role="tab">Programs</button>
+    <button class="tab" data-tab="history" role="tab">History</button>
   </nav>
 
   <main>
 
+    <!-- ---------------------------------------------------------- Dashboard -->
     <section id="tab-dashboard" class="tab-panel active">
+
+      <div class="card card-hero">
+        <div class="hero-head">
+          <h2>Running now</h2>
+          <span id="running-count" class="pill pill-quiet">Idle</span>
+        </div>
+        <div id="current-runs" class="stack"></div>
+      </div>
+
       <div class="card">
-        <h2>Rain delay</h2>
+        <h2>Up next</h2>
+        <div id="next-events" class="stack"></div>
+      </div>
+
+      <div class="card">
+        <div class="hero-head">
+          <h2>Rain delay</h2>
+          <button class="btn btn-ghost btn-small" id="clear-delay-btn">Clear</button>
+        </div>
+        <p class="hint">Pauses every scheduled program. Manual runs still work.</p>
         <div class="btn-row">
-          <button class="btn" data-delay="24">24h</button>
-          <button class="btn" data-delay="48">48h</button>
-          <button class="btn" data-delay="72">72h</button>
-          <button class="btn" id="custom-delay-btn">Custom&#8230;</button>
-          <button class="btn btn-ghost" id="clear-delay-btn">Clear</button>
-        </div>
-        <div id="custom-delay-row" class="btn-row" hidden>
-          <input type="number" id="custom-delay-hours" min="1" placeholder="Hours" />
-          <button class="btn" id="apply-custom-delay">Apply</button>
+          <button class="btn" data-delay="12">12 hours</button>
+          <button class="btn" data-delay="24">24 hours</button>
+          <button class="btn" data-delay="48">48 hours</button>
+          <button class="btn" data-delay="72">72 hours</button>
+          <div class="inline-field">
+            <input type="number" id="custom-delay-hours" min="1" max="720" placeholder="Hours" />
+            <button class="btn" id="apply-custom-delay">Set</button>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Currently running</h2>
-        <div id="current-runs" class="list">Nothing running right now.</div>
-      </div>
-
-      <div class="card">
-        <h2>Upcoming</h2>
-        <div id="next-events" class="list">No upcoming runs scheduled.</div>
-      </div>
     </section>
 
+    <!-- -------------------------------------------------------------- Zones -->
     <section id="tab-zones" class="tab-panel">
+
       <div class="card">
         <h2>Add a zone</h2>
-        <div class="form-row">
-          <select id="new-zone-entity"><option>Loading entities&#8230;</option></select>
-          <input type="text" id="new-zone-name" placeholder="Zone name (e.g. Front lawn)" />
-          <button class="btn" id="add-zone-btn">Add zone</button>
+        <p class="hint">Each zone is one Home Assistant switch or valve entity - one sprinkler circuit.</p>
+        <div class="field-row">
+          <label class="field">
+            <span>Entity</span>
+            <select id="new-zone-entity"><option>Loading entities&#8230;</option></select>
+          </label>
+          <label class="field">
+            <span>Zone name</span>
+            <input type="text" id="new-zone-name" placeholder="e.g. Front lawn" />
+          </label>
+          <button class="btn btn-primary" id="add-zone-btn">Add zone</button>
         </div>
       </div>
+
       <div class="card">
-        <h2>Zones</h2>
-        <div id="zones-list" class="list">Loading&#8230;</div>
+        <h2>Your zones</h2>
+        <div id="zones-list" class="stack"></div>
       </div>
+
     </section>
 
+    <!-- ----------------------------------------------------------- Programs -->
     <section id="tab-programs" class="tab-panel">
+
       <div class="card">
-        <h2>New program</h2>
-        <div class="form-grid" id="program-form">
-          <label>Name
-            <input type="text" id="pf-name" placeholder="e.g. Front lawn - summer" />
-          </label>
-          <label>Start from preset
-            <select id="pf-preset"><option value="custom">Custom (blank)</option></select>
-          </label>
-          <label>Schedule type
-            <select id="pf-schedule-type">
-              <option value="weekdays">Specific days of the week</option>
-              <option value="interval">Every N days</option>
-            </select>
-          </label>
-          <div id="pf-weekdays-row" class="weekday-picker">
-            <label><input type="checkbox" value="mon" /> Mon</label>
-            <label><input type="checkbox" value="tue" /> Tue</label>
-            <label><input type="checkbox" value="wed" /> Wed</label>
-            <label><input type="checkbox" value="thu" /> Thu</label>
-            <label><input type="checkbox" value="fri" /> Fri</label>
-            <label><input type="checkbox" value="sat" /> Sat</label>
-            <label><input type="checkbox" value="sun" /> Sun</label>
+        <h2>Start from a growth stage</h2>
+        <p class="hint">
+          Each stage fills in the cycle times and per-zone runtime below. Everything
+          stays editable, and the schedule preview updates as you change it.
+        </p>
+        <div id="preset-gallery" class="preset-gallery"></div>
+      </div>
+
+      <div class="card" id="program-form">
+        <div class="hero-head">
+          <h2 id="builder-title">Build a program</h2>
+          <button class="btn btn-ghost btn-small" id="pf-cancel-btn" hidden>Cancel edit</button>
+        </div>
+
+        <label class="field">
+          <span>Program name</span>
+          <input type="text" id="pf-name" placeholder="e.g. Back lawn - new seed" />
+        </label>
+
+        <!-- Which days -->
+        <div class="section">
+          <div class="section-head">
+            <h3>Which days</h3>
           </div>
-          <label id="pf-interval-row" hidden>Every
-            <input type="number" id="pf-interval-days" min="1" value="2" /> days
-          </label>
-          <label>Start time
-            <input type="time" id="pf-start-time" value="06:00" />
-          </label>
-          <label>Zone run mode
-            <select id="pf-run-mode">
-              <option value="sequential">One zone at a time</option>
-              <option value="simultaneous">All zones together</option>
-            </select>
-          </label>
-          <label class="checkbox-label"><input type="checkbox" id="pf-enabled" checked /> Enabled</label>
+          <div class="segmented" id="pf-schedule-type" data-value="weekdays">
+            <button type="button" data-value="weekdays">Days of the week</button>
+            <button type="button" data-value="interval">Every N days</button>
+          </div>
+
+          <div id="pf-weekdays-row" class="day-picker">
+            <button type="button" class="day" data-day="mon">Mon</button>
+            <button type="button" class="day" data-day="tue">Tue</button>
+            <button type="button" class="day" data-day="wed">Wed</button>
+            <button type="button" class="day" data-day="thu">Thu</button>
+            <button type="button" class="day" data-day="fri">Fri</button>
+            <button type="button" class="day" data-day="sat">Sat</button>
+            <button type="button" class="day" data-day="sun">Sun</button>
+            <button type="button" class="btn btn-ghost btn-small" id="pf-everyday-btn">Every day</button>
+          </div>
+
+          <div id="pf-interval-row" class="inline-field" hidden>
+            <span class="inline-label">Run every</span>
+            <input type="number" id="pf-interval-days" min="1" max="30" value="3" />
+            <span class="inline-label">days</span>
+          </div>
         </div>
 
-        <h3>Zones in this program</h3>
-        <div id="pf-zones-list" class="list">No zones added yet.</div>
-        <div class="form-row">
-          <select id="pf-add-zone-select"></select>
-          <input type="number" id="pf-add-zone-duration" min="0" step="0.5" placeholder="Minutes" />
-          <button class="btn" id="pf-add-zone-btn">Add to program</button>
+        <!-- Cycles per day: the multi-time editor -->
+        <div class="section">
+          <div class="section-head">
+            <h3>Cycles per day</h3>
+            <span id="cycle-count-pill" class="pill pill-quiet"></span>
+          </div>
+          <p class="hint">
+            A cycle waters every zone once. Seedlings want several short cycles a day;
+            established turf wants one long one.
+          </p>
+          <div class="quick-row">
+            <span class="inline-label">Quick set</span>
+            <button type="button" class="btn btn-small" data-quick-cycles="1">1&times; a day</button>
+            <button type="button" class="btn btn-small" data-quick-cycles="2">2&times; a day</button>
+            <button type="button" class="btn btn-small" data-quick-cycles="3">3&times; a day</button>
+          </div>
+          <div id="pf-cycles" class="cycle-list"></div>
+          <button class="btn btn-ghost btn-small" id="pf-add-cycle-btn">+ Add a cycle</button>
         </div>
 
-        <div class="btn-row" style="margin-top:12px;">
+        <!-- Zones -->
+        <div class="section">
+          <div class="section-head">
+            <h3>Zones in run order</h3>
+          </div>
+          <div id="pf-zones-list" class="stack"></div>
+          <div class="field-row">
+            <label class="field">
+              <span>Add zone</span>
+              <select id="pf-add-zone-select"></select>
+            </label>
+            <label class="field field-narrow">
+              <span>Minutes each</span>
+              <input type="number" id="pf-add-zone-duration" min="0.5" step="0.5" placeholder="10" />
+            </label>
+            <button class="btn" id="pf-add-zone-btn">Add</button>
+          </div>
+        </div>
+
+        <!-- Run mode -->
+        <div class="section">
+          <div class="section-head">
+            <h3>How zones run</h3>
+          </div>
+          <div class="segmented" id="pf-run-mode" data-value="sequential">
+            <button type="button" data-value="sequential">One at a time</button>
+            <button type="button" data-value="simultaneous">All together</button>
+          </div>
+          <p class="hint" id="run-mode-hint"></p>
+        </div>
+
+        <!-- Live preview -->
+        <div class="section">
+          <div class="section-head">
+            <h3>Schedule preview</h3>
+          </div>
+          <div id="timeline-summary" class="summary-grid"></div>
+          <div id="timeline-warning" class="notice notice-warn" hidden></div>
+          <div id="timeline-preview" class="timeline-wrap"></div>
+        </div>
+
+        <div class="btn-row form-actions">
+          <label class="switch">
+            <input type="checkbox" id="pf-enabled" checked />
+            <span>Enabled</span>
+          </label>
           <button class="btn btn-primary" id="pf-save-btn">Save program</button>
-          <button class="btn btn-ghost" id="pf-cancel-btn" hidden>Cancel edit</button>
         </div>
       </div>
 
       <div class="card">
-        <h2>Programs</h2>
-        <div id="programs-list" class="list">Loading&#8230;</div>
+        <h2>Saved programs</h2>
+        <div id="programs-list" class="stack"></div>
       </div>
+
     </section>
 
+    <!-- ------------------------------------------------------------ History -->
     <section id="tab-history" class="tab-panel">
       <div class="card">
         <h2>Recent runs</h2>
-        <div id="history-list" class="list">Loading&#8230;</div>
+        <div id="history-list" class="stack"></div>
       </div>
     </section>
 
   </main>
 </div>
+
+<div id="toasts" class="toasts"></div>
+
 <script src="app.js"></script>
 </body>
 </html>

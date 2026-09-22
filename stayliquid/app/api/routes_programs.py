@@ -1,15 +1,30 @@
 import asyncio
+import re
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from .. import storage
-from ..presets import GROWTH_STAGE_PRESETS
+from .. import presets, storage
 from ..runner import run_program
 from ..scheduler import remove_program, sync_program
 
 router = APIRouter()
+
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_times(times: list[str] | None) -> list[str] | None:
+    if times is None:
+        return None
+    if not times:
+        raise ValueError("A program needs at least one cycle time.")
+    for t in times:
+        if not TIME_RE.match(t):
+            raise ValueError(f"'{t}' is not a valid 24-hour HH:MM time.")
+    if len(set(times)) != len(times):
+        raise ValueError("Two cycles can't start at the same time.")
+    return sorted(times)
 
 
 class ProgramZoneIn(BaseModel):
@@ -25,10 +40,15 @@ class ProgramIn(BaseModel):
     weekdays: str | None = None               # "mon,wed,fri"
     interval_days: int | None = None
     anchor_date: str | None = None            # "YYYY-MM-DD", defaults to today
-    start_time: str                            # "HH:MM"
+    start_times: list[str]                     # one "HH:MM" per daily cycle
     run_mode: str = "sequential"               # 'sequential' | 'simultaneous'
     enabled: bool = True
     zones: list[ProgramZoneIn] = []
+
+    @field_validator("start_times")
+    @classmethod
+    def check_times(cls, v):
+        return _validate_times(v)
 
 
 class ProgramUpdate(BaseModel):
@@ -38,15 +58,20 @@ class ProgramUpdate(BaseModel):
     weekdays: str | None = None
     interval_days: int | None = None
     anchor_date: str | None = None
-    start_time: str | None = None
+    start_times: list[str] | None = None
     run_mode: str | None = None
     enabled: bool | None = None
     zones: list[ProgramZoneIn] | None = None
 
+    @field_validator("start_times")
+    @classmethod
+    def check_times(cls, v):
+        return _validate_times(v)
+
 
 @router.get("/presets")
 async def list_presets():
-    return GROWTH_STAGE_PRESETS
+    return presets.list_presets()
 
 
 @router.get("/programs")
@@ -64,9 +89,7 @@ async def get_program(program_id: int):
 
 @router.post("/programs")
 async def create_program(body: ProgramIn):
-    data = body.model_dump()
-    data["zones"] = [z for z in data["zones"]]
-    program = await run_in_threadpool(storage.create_program, data)
+    program = await run_in_threadpool(storage.create_program, body.model_dump())
     sync_program(program)
     return program
 
