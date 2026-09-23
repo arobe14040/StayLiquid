@@ -11,6 +11,9 @@
   --on-accent: #ffffff;
   --danger: #bd3b2f;
   --danger-soft: #fdecea;
+  /* Text sitting on a filled --danger button. The danger hue is dark in light
+     mode and light in dark mode, so the ink has to flip with it. */
+  --on-danger: #ffffff;
   --warn: #8a5a00;
   --warn-soft: #fff3da;
   --info: #1d6fa5;
@@ -39,6 +42,7 @@
     --on-accent: #06140f;
     --danger: #ff7a6b;
     --danger-soft: #3a1b18;
+    --on-danger: #2a0f0c;
     --warn: #f3c75f;
     --warn-soft: #382b0e;
     --info: #6cb8e8;
@@ -179,6 +183,8 @@ body {
 .btn-ghost { background: transparent; }
 .btn-danger { background: transparent; color: var(--danger); border-color: var(--border); }
 .btn-danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.btn-danger-solid { background: var(--danger); color: var(--on-danger); border-color: transparent; }
+.btn-danger-solid:hover { filter: brightness(1.06); }
 .btn-small { padding: 6px 11px; font-size: 13px; border-radius: 8px; }
 .btn-icon {
   padding: 5px 9px;
@@ -588,6 +594,17 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 
 .review-enabled { margin-top: 16px; }
 
+/* Sits above the builder modal, which can be open underneath it. */
+.confirm-backdrop { z-index: 60; align-items: center; }
+.modal-sm { max-width: 400px; }
+
+.confirm-body { padding: 20px 20px 4px; }
+.confirm-body h2 { margin: 0 0 6px; font-size: 16px; }
+.confirm-body p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+.confirm-foot { justify-content: flex-end; }
+.confirm-foot .btn { min-width: 92px; justify-content: center; }
+
 .preset-banner {
   background: var(--accent-soft);
   border: 1px solid var(--accent);
@@ -736,7 +753,7 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 50;
+  z-index: 70;
   pointer-events: none;
 }
 .toast {

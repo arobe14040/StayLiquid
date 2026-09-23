@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1
+
+Replaces the browser's confirm boxes with dialogs that match the app.
+
+- **Deleting a zone or program, and discarding an unsaved program, now use a
+  proper dialog** instead of the browser's grey "Are you sure?" prompt.
+- **They say what actually happens.** Deleting a program notes that run history
+  is kept; deleting a zone notes that programs using it lose it; discarding
+  distinguishes a new program from edits to a saved one.
+- The destructive button is red and labelled for the action ("Delete zone", not
+  "OK"), and **Cancel takes focus**, so a stray Enter cancels rather than
+  deletes. Escape and a click outside both cancel.
+- Filled danger buttons get their own foreground colour, so the label stays
+  readable in dark mode where the danger hue is light (was white-on-salmon at
+  about 2.6:1, now 7:1).
+
 ## 0.4.0
 
 Step 2 of the builder is now a review of the defaults a stage fills in.

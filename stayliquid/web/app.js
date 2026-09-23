@@ -113,6 +113,52 @@ function toast(message, kind = "ok") {
   setTimeout(() => div.remove(), 3600);
 }
 
+// ---- confirm dialog ---------------------------------------------------------
+
+let settleConfirm = null;
+
+/** Ask the user to confirm something. Resolves true if they go ahead. */
+function askConfirm({ title, message, confirmLabel = "Confirm", danger = false }) {
+  const modal = el("confirm-modal");
+  // If the markup isn't there (a stale index.html), a browser prompt is still
+  // better than silently destroying something.
+  if (!modal) return Promise.resolve(window.confirm(message));
+
+  return new Promise((resolve) => {
+    // A second request would strand the first promise, so close that one out.
+    if (settleConfirm) settleConfirm(false);
+
+    const previous = document.activeElement;
+    el("confirm-title").textContent = title;
+    el("confirm-message").textContent = message;
+
+    const ok = el("confirm-ok");
+    ok.textContent = confirmLabel;
+    ok.className = `btn ${danger ? "btn-danger-solid" : "btn-primary"}`;
+
+    modal.hidden = false;
+    document.body.style.overflow = "hidden";
+    // Focus the safe choice when the action can't be undone, so a stray Enter
+    // cancels instead of deleting.
+    (danger ? el("confirm-cancel") : ok).focus();
+
+    settleConfirm = (answer) => {
+      settleConfirm = null;
+      modal.hidden = true;
+      // The builder modal may still be open underneath and wants the lock kept.
+      document.body.style.overflow = el("program-modal")?.hidden === false ? "hidden" : "";
+      if (previous) previous.focus();
+      resolve(answer);
+    };
+  });
+}
+
+on("confirm-ok", "click", () => settleConfirm?.(true));
+on("confirm-cancel", "click", () => settleConfirm?.(false));
+on("confirm-modal", "click", (e) => {
+  if (e.target === el("confirm-modal")) settleConfirm?.(false);
+});
+
 async function guard(fn, successMessage) {
   try {
     await fn();
@@ -382,7 +428,13 @@ async function loadZonesTab() {
     );
     row.querySelector(".delete-zone").addEventListener("click", () =>
       guard(async () => {
-        if (!confirm(`Delete zone "${z.name}"? Programs using it will lose that zone.`)) return;
+        const go = await askConfirm({
+          title: `Delete ${z.name}?`,
+          message: "Any program using this zone will lose it. This can't be undone.",
+          confirmLabel: "Delete zone",
+          danger: true,
+        });
+        if (!go) return;
         await apiDelete(`api/zones/${z.id}`);
         await loadZonesTab();
       })
@@ -890,9 +942,19 @@ function openModal(program) {
   goToStep(0);
 }
 
-function closeModal(skipConfirm) {
+async function closeModal(skipConfirm) {
   const started = builder.zones.length || builder.cycles.length || el("pf-name").value.trim();
-  if (!skipConfirm && started && !confirm("Discard this program?")) return;
+  if (!skipConfirm && started) {
+    const discard = await askConfirm({
+      title: builder.editingId ? "Discard your changes?" : "Discard this program?",
+      message: builder.editingId
+        ? "The program stays exactly as it was before you opened it."
+        : "Nothing has been saved yet, so this program will be lost.",
+      confirmLabel: "Discard",
+      danger: true,
+    });
+    if (!discard) return;
+  }
   el("program-modal").hidden = true;
   document.body.style.overflow = "";
   resetBuilder();
@@ -968,7 +1030,10 @@ on("program-modal", "click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !el("program-modal").hidden) closeModal(false);
+  if (e.key !== "Escape") return;
+  // The confirm dialog sits on top, so it gets the key first.
+  if (settleConfirm) return settleConfirm(false);
+  if (!el("program-modal").hidden) closeModal(false);
 });
 
 on("modal-save", "click", () =>
@@ -1003,7 +1068,7 @@ on("modal-save", "click", () =>
     } else {
       await apiPost("api/programs", payload);
     }
-    closeModal(true);
+    await closeModal(true);
     await loadProgramsTab();
   }, "Program saved.")
 );
@@ -1072,7 +1137,13 @@ function renderProgramsList(programs) {
     row.querySelector(".edit-program").addEventListener("click", () => openModal(p));
     row.querySelector(".delete-program").addEventListener("click", () =>
       guard(async () => {
-        if (!confirm(`Delete program "${p.name}"?`)) return;
+        const go = await askConfirm({
+          title: `Delete ${p.name}?`,
+          message: "The schedule and its cycle times are removed. Run history is kept.",
+          confirmLabel: "Delete program",
+          danger: true,
+        });
+        if (!go) return;
         await apiDelete(`api/programs/${p.id}`);
         await loadProgramsTab();
       })

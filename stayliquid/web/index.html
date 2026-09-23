@@ -279,6 +279,21 @@
   </div>
 </div>
 
+<!-- ------------------------------------------------------- confirm dialog -->
+<div id="confirm-modal" class="modal-backdrop confirm-backdrop" hidden>
+  <div class="modal modal-sm" role="alertdialog" aria-modal="true"
+       aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="confirm-body">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+    </div>
+    <footer class="modal-foot confirm-foot">
+      <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-primary" id="confirm-ok">Confirm</button>
+    </footer>
+  </div>
+</div>
+
 <div id="toasts" class="toasts"></div>
 
 <script src="app.js"></script>
