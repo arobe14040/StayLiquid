@@ -296,25 +296,32 @@ input[type="time"] { font-variant-numeric: tabular-nums; }
 .quick-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
 
 .cycle-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+
+/* Two rows by design: the time and its controls, then the note underneath.
+   Left to flex-wrap it broke into three lines in a narrow column. */
 .cycle-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(108px, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 9px 12px;
+  padding: 8px 10px;
 }
 .cycle-row .cycle-tag {
-  min-width: 76px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--accent);
 }
-.cycle-row input[type="time"] { width: 130px; flex: none; }
-.cycle-row .cycle-note { font-size: 12px; color: var(--muted); margin-left: auto; }
+.cycle-row input[type="time"] { width: 100%; padding: 6px 8px; font-size: 13px; }
+.cycle-row .cycle-note {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--muted);
+}
 .cycle-empty {
   font-size: 13px;
   color: var(--muted);
@@ -509,10 +516,13 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   border-radius: var(--radius);
   box-shadow: 0 12px 48px rgba(0, 0, 0, .28);
   width: 100%;
-  max-width: 660px;
+  /* Wide enough for two columns and for the review timeline to sit without
+     scrolling sideways; the steps were a narrow column scrolling vertically
+     while most of the screen went unused. */
+  max-width: 900px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 48px);
+  max-height: calc(100vh - 40px);
   animation: modal-in .18s ease;
 }
 @keyframes modal-in { from { opacity: 0; transform: translateY(-8px); } }
@@ -581,6 +591,94 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 .stepper li.done .dot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .stepper li.current { color: var(--text); }
 .stepper li.current .dot { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+
+/* Step layout: two columns where there's room, stacked where there isn't. */
+.step-cols {
+  display: grid;
+  /* minmax(0,…) rather than 1fr: a plain 1fr still refuses to go below its
+     content's minimum, and the day picker's is wide enough to starve the other
+     column until its rows wrapped three lines deep. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px 26px;
+  align-items: start;
+}
+.step-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* Below this the two columns have nowhere to go, so stack them. Keyed to the
+   modal's own width rather than the phone breakpoint, because a narrow desktop
+   window hits it first. */
+@media (max-width: 820px) {
+  .step-cols { grid-template-columns: 1fr; gap: 16px; }
+}
+
+/* A labelled group inside a column - the old `.section` drew a divider and
+   owned a lot of vertical space, which is what made the steps so tall. */
+.block { min-width: 0; }
+.block > h3,
+.block-head h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+.block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.block-head h3 { margin: 0; }
+.block .hint { margin: 8px 0 0; }
+.block .segmented + .day-picker { margin-top: 10px; }
+
+.segmented-stack { display: inline-flex; }
+
+/* Add-zone controls on one line rather than three stacked labelled fields. */
+.add-zone-row {
+  display: grid;
+  grid-template-columns: 1fr 72px auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.add-zone-row select, .add-zone-row input { width: 100%; }
+
+.zone-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.zone-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto 68px auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+.zone-row:first-child { border-top: none; }
+.zone-row-n {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.zone-row-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-row-water { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.zone-row .zone-minutes { padding: 5px 7px; font-size: 13px; }
+.zone-row-actions { display: flex; gap: 2px; }
+.zone-row-actions .btn-icon { padding: 3px 6px; font-size: 13px; }
 
 .blank-start {
   display: block;
@@ -862,7 +960,10 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 .run-meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
 
 /* The step strip: one chip per zone, in the order they were meant to run, so a
-   gap in the middle of a program is obvious without reading any of it. */
+   gap in the middle of a program is obvious without reading any of it.
+   Named run-step, not step: the builder's wizard sections are .step, and a
+   bare .step rule here silently restyled them - it was making the review
+   step's timeline a flex item instead of letting it fill the modal. */
 .step-strip {
   display: flex;
   flex-wrap: wrap;
@@ -871,7 +972,7 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   margin: 12px 0 0;
   padding: 0;
 }
-.step {
+.run-step {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -881,7 +982,7 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   font-size: 12px;
   background: var(--surface);
 }
-.step-n {
+.run-step-n {
   display: grid;
   place-items: center;
   width: 18px;
@@ -893,17 +994,17 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   background: var(--border);
   color: var(--muted);
 }
-.step-zone { font-weight: 600; }
-.step-mark { font-weight: 700; }
+.run-step-zone { font-weight: 600; }
+.run-step-mark { font-weight: 700; }
 
-.step-ok .step-n { background: var(--accent-soft); color: var(--accent); }
-.step-ok .step-mark { color: var(--accent); }
-.step-cut { border-color: var(--warn); }
-.step-cut .step-n { background: var(--warn-soft); color: var(--warn); }
-.step-cut .step-mark { color: var(--warn); }
-.step-bad { border-color: var(--critical); }
-.step-bad .step-n { background: var(--critical); color: #fff; }
-.step-bad .step-mark { color: var(--critical); }
+.run-step-ok .run-step-n { background: var(--accent-soft); color: var(--accent); }
+.run-step-ok .run-step-mark { color: var(--accent); }
+.run-step-cut { border-color: var(--warn); }
+.run-step-cut .run-step-n { background: var(--warn-soft); color: var(--warn); }
+.run-step-cut .run-step-mark { color: var(--warn); }
+.run-step-bad { border-color: var(--critical); }
+.run-step-bad .run-step-n { background: var(--critical); color: #fff; }
+.run-step-bad .run-step-mark { color: var(--critical); }
 
 .run-problems {
   margin: 12px 0 0;
@@ -984,15 +1085,29 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   .field-row .btn { width: 100%; }
   .segmented { width: 100%; }
   .segmented button { flex: 1; }
-  /* Keep the time and its remove button on one line, note underneath. */
-  .cycle-row { flex-wrap: wrap; }
-  .cycle-row .cycle-tag { min-width: 0; }
-  .cycle-row .remove-cycle { order: 2; margin-left: auto; }
-  .cycle-row .cycle-note { order: 3; margin-left: 0; width: 100%; }
 
   /* Four labels don't fit a phone, and truncating them all reads worse than
      showing dots plus the step you're actually on. */
   .stepper li:not(.current) { flex: 0 0 auto; }
   .stepper li:not(.current) .step-name { display: none; }
   .stepper li.current { flex: 1; }
+
+  /* Give the modal the whole screen rather than a card floating in it, and
+     trim the padding - on a phone every row of it costs a row of content. */
+  .modal-backdrop { padding: 0; }
+  .modal {
+    max-width: none;
+    max-height: 100vh;
+    height: 100vh;
+    border: none;
+    border-radius: 0;
+  }
+  .modal-head { padding: 14px 14px 10px; }
+  .stepper { padding: 0 14px 12px; }
+  .modal-body { padding: 4px 14px 16px; }
+  .modal-foot { padding: 12px 14px; border-radius: 0; }
+
+  .zone-row { grid-template-columns: 22px 1fr 60px auto auto; gap: 6px; }
+  .zone-row-water { display: none; }
+  .add-zone-row { grid-template-columns: 1fr 64px auto auto; }
 }

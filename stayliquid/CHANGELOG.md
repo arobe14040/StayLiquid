@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.1
+
+The program builder now fits the screen instead of scrolling through it.
+
+- **Two columns on a wide screen.** The steps were a 660px column scrolling
+  vertically while most of the window went unused. On a 1100x760 laptop every
+  step now fits with nothing cut off - the Zones step alone used to run 587px
+  past the bottom.
+- **Compact zone rows.** Five zones were taller than the modal on their own;
+  each is now a single line with its number, runtime and controls.
+- **The review timeline no longer scrolls sideways.** It was being laid out as
+  a flex item 467px wide inside an 863px space - see below.
+- **Full-screen on a phone**, rather than a card floating inside the viewport,
+  with the padding trimmed so the space goes to content.
+- Cycle rows are two tidy lines instead of wrapping into three.
+
+Fixes a CSS class collision behind several of these: the builder's wizard
+sections and the History tab's step chips were both `.step`, so the chip
+styling - including `display: flex` - was silently being applied to the wizard.
+The chips are now `.run-step`.
+
 ## 0.9.0
 
 A panel of zone switches at the top of the Dashboard.

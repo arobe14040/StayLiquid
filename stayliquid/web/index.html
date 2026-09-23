@@ -185,98 +185,111 @@
         </button>
       </section>
 
-      <!-- Step: the numbers a preset fills in, all editable before they're used -->
+      <!-- Step: the numbers a preset fills in, all editable before they're used.
+           Two columns on a wide screen so the whole step is visible at once;
+           they stack on a narrow one. -->
       <section class="step" data-step="schedule" hidden>
         <div class="preset-banner" id="preset-banner" hidden></div>
 
-        <label class="field">
-          <span>Program name</span>
-          <input type="text" id="pf-name" placeholder="e.g. Back lawn - new seed" />
-        </label>
+        <div class="step-cols">
+          <div class="step-col">
+            <label class="field">
+              <span>Program name</span>
+              <input type="text" id="pf-name" placeholder="e.g. Back lawn - new seed" />
+            </label>
 
-        <div class="section">
-          <div class="section-head">
-            <h3>How long each zone runs</h3>
-          </div>
-          <p class="hint">
-            Sets the runtime for every zone in this program. You can still give an
-            individual zone its own time on the next step.
-          </p>
-          <div class="inline-field">
-            <input type="number" id="pf-default-minutes" min="0.5" step="0.5" />
-            <span class="inline-label">minutes per zone, per cycle</span>
-          </div>
-          <div class="water-readout" id="water-readout"></div>
-        </div>
+            <div class="block">
+              <h3>How long each zone runs</h3>
+              <div class="inline-field">
+                <input type="number" id="pf-default-minutes" min="0.5" step="0.5" />
+                <span class="inline-label">min per zone, per cycle</span>
+              </div>
+              <p class="hint">
+                Applies to every zone. A single zone can still be given its own
+                time on the next step.
+              </p>
+              <div class="water-readout" id="water-readout"></div>
+            </div>
 
-        <div class="section">
-          <div class="section-head"><h3>Which days</h3></div>
-          <div class="segmented" id="pf-schedule-type" data-value="weekdays">
-            <button type="button" data-value="weekdays">Days of the week</button>
-            <button type="button" data-value="interval">Every N days</button>
+            <div class="block">
+              <h3>Which days</h3>
+              <div class="segmented" id="pf-schedule-type" data-value="weekdays">
+                <button type="button" data-value="weekdays">Days of the week</button>
+                <button type="button" data-value="interval">Every N days</button>
+              </div>
+
+              <div id="pf-weekdays-row" class="day-picker">
+                <button type="button" class="day" data-day="mon">Mon</button>
+                <button type="button" class="day" data-day="tue">Tue</button>
+                <button type="button" class="day" data-day="wed">Wed</button>
+                <button type="button" class="day" data-day="thu">Thu</button>
+                <button type="button" class="day" data-day="fri">Fri</button>
+                <button type="button" class="day" data-day="sat">Sat</button>
+                <button type="button" class="day" data-day="sun">Sun</button>
+                <button type="button" class="btn btn-ghost btn-small" id="pf-everyday-btn">Every day</button>
+              </div>
+
+              <div id="pf-interval-row" class="inline-field" hidden>
+                <span class="inline-label">Run every</span>
+                <input type="number" id="pf-interval-days" min="1" max="30" value="3" />
+                <span class="inline-label">days</span>
+              </div>
+            </div>
           </div>
 
-          <div id="pf-weekdays-row" class="day-picker">
-            <button type="button" class="day" data-day="mon">Mon</button>
-            <button type="button" class="day" data-day="tue">Tue</button>
-            <button type="button" class="day" data-day="wed">Wed</button>
-            <button type="button" class="day" data-day="thu">Thu</button>
-            <button type="button" class="day" data-day="fri">Fri</button>
-            <button type="button" class="day" data-day="sat">Sat</button>
-            <button type="button" class="day" data-day="sun">Sun</button>
-            <button type="button" class="btn btn-ghost btn-small" id="pf-everyday-btn">Every day</button>
+          <div class="step-col">
+            <div class="block">
+              <div class="block-head">
+                <h3>Cycles per day</h3>
+                <span id="cycle-count-pill" class="pill pill-quiet"></span>
+              </div>
+              <p class="hint">
+                A cycle waters every zone once. Seedlings want several short cycles
+                a day; established turf wants one long one.
+              </p>
+              <div class="quick-row">
+                <span class="inline-label">Quick set</span>
+                <button type="button" class="btn btn-small" data-quick-cycles="1">1&times;</button>
+                <button type="button" class="btn btn-small" data-quick-cycles="2">2&times;</button>
+                <button type="button" class="btn btn-small" data-quick-cycles="3">3&times;</button>
+              </div>
+              <div id="pf-cycles" class="cycle-list"></div>
+              <button type="button" class="btn btn-ghost btn-small" id="pf-add-cycle-btn">+ Add a cycle</button>
+            </div>
           </div>
-
-          <div id="pf-interval-row" class="inline-field" hidden>
-            <span class="inline-label">Run every</span>
-            <input type="number" id="pf-interval-days" min="1" max="30" value="3" />
-            <span class="inline-label">days</span>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-head">
-            <h3>Cycles per day</h3>
-            <span id="cycle-count-pill" class="pill pill-quiet"></span>
-          </div>
-          <p class="hint">
-            A cycle waters every zone once. Seedlings want several short cycles a day;
-            established turf wants one long one.
-          </p>
-          <div class="quick-row">
-            <span class="inline-label">Quick set</span>
-            <button type="button" class="btn btn-small" data-quick-cycles="1">1&times; a day</button>
-            <button type="button" class="btn btn-small" data-quick-cycles="2">2&times; a day</button>
-            <button type="button" class="btn btn-small" data-quick-cycles="3">3&times; a day</button>
-          </div>
-          <div id="pf-cycles" class="cycle-list"></div>
-          <button type="button" class="btn btn-ghost btn-small" id="pf-add-cycle-btn">+ Add a cycle</button>
         </div>
       </section>
 
       <!-- Step: zones -->
       <section class="step" data-step="zones" hidden>
-        <div class="section-head"><h3>Zones in run order</h3></div>
-        <div id="pf-zones-list" class="stack"></div>
-        <div class="field-row">
-          <label class="field">
-            <span>Add zone</span>
-            <select id="pf-add-zone-select"></select>
-          </label>
-          <label class="field field-narrow">
-            <span>Minutes each</span>
-            <input type="number" id="pf-add-zone-duration" min="0.5" step="0.5" placeholder="10" />
-          </label>
-          <button type="button" class="btn" id="pf-add-zone-btn">Add</button>
-        </div>
-
-        <div class="section">
-          <div class="section-head"><h3>How zones run</h3></div>
-          <div class="segmented" id="pf-run-mode" data-value="sequential">
-            <button type="button" data-value="sequential">One at a time</button>
-            <button type="button" data-value="simultaneous">All together</button>
+        <div class="step-cols">
+          <div class="step-col">
+            <div class="block">
+              <div class="block-head">
+                <h3>Zones in run order</h3>
+                <span id="zone-count-pill" class="pill pill-quiet"></span>
+              </div>
+              <div id="pf-zones-list"></div>
+              <div class="add-zone-row">
+                <select id="pf-add-zone-select" aria-label="Zone to add"></select>
+                <input type="number" id="pf-add-zone-duration" min="0.5" step="0.5"
+                       placeholder="10" aria-label="Minutes for the added zone" />
+                <span class="inline-label">min</span>
+                <button type="button" class="btn" id="pf-add-zone-btn">Add</button>
+              </div>
+            </div>
           </div>
-          <p class="hint" id="run-mode-hint"></p>
+
+          <div class="step-col">
+            <div class="block">
+              <h3>How zones run</h3>
+              <div class="segmented segmented-stack" id="pf-run-mode" data-value="sequential">
+                <button type="button" data-value="sequential">One at a time</button>
+                <button type="button" data-value="simultaneous">All together</button>
+              </div>
+              <p class="hint" id="run-mode-hint"></p>
+            </div>
+          </div>
         </div>
       </section>
 

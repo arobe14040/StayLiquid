@@ -941,11 +941,14 @@ function renderCycles() {
   builder.cycles.forEach((time, idx) => {
     const row = document.createElement("div");
     row.className = "cycle-row";
+    // Remove button before the note: the note spans the full width on its own
+    // row, so anything after it in the DOM would be pushed onto a third.
     row.innerHTML = `
       <span class="cycle-tag">${escapeHtml(cycleLabel(time))}</span>
-      <input type="time" value="${escapeHtml(time)}" step="300" />
+      <input type="time" value="${escapeHtml(time)}" step="300" aria-label="Cycle start time" />
+      <button type="button" class="btn btn-icon remove-cycle" title="Remove cycle"
+              aria-label="Remove the ${escapeHtml(cycleLabel(time))} cycle">&times;</button>
       <span class="cycle-note"></span>
-      <button type="button" class="btn btn-icon remove-cycle" title="Remove cycle">&times;</button>
     `;
     const input = row.querySelector("input");
     const tag = row.querySelector(".cycle-tag");
@@ -1004,37 +1007,58 @@ on("pf-add-zone-btn", "click", () => {
 
 function renderBuilderZones() {
   const list = el("pf-zones-list");
+  const pill = el("zone-count-pill");
+  if (pill) {
+    pill.textContent = builder.zones.length
+      ? `${builder.zones.length} zone${builder.zones.length === 1 ? "" : "s"}`
+      : "none yet";
+  }
+
   if (!builder.zones.length) {
     emptyState(
       list,
       zonesCache.length
-        ? "No zones in this program yet. Add them below, or pick a growth stage to add them all."
+        ? "None yet - add one below, or pick a growth stage to add them all."
         : "You have no zones configured. Add them on the Zones tab first."
     );
     return;
   }
 
-  list.innerHTML = "";
+  // One line per zone. As full-height list rows, five zones ran well past the
+  // bottom of the modal on a laptop.
+  list.innerHTML = `<ol class="zone-rows"></ol>`;
+  const rows = list.firstElementChild;
+
   builder.zones.forEach((z, idx) => {
-    const perCycle = inchesFor(z.duration_minutes);
-    const row = rowItem(
-      `${idx + 1}. ${escapeHtml(z.zone_name)}`,
-      `<span class="water-note">${fmtInches(perCycle)} per cycle &middot; ${fmtInches(perCycle * builder.cycles.length)} per day</span>`,
-      `
-        <input type="number" class="zone-minutes" value="${z.duration_minutes}" min="0.5" step="0.5" style="width:78px" />
-        <span class="inline-label">min</span>
-        <button type="button" class="btn btn-icon move-up" title="Move earlier" ${idx === 0 ? "disabled" : ""}>&uarr;</button>
-        <button type="button" class="btn btn-icon move-down" title="Move later" ${idx === builder.zones.length - 1 ? "disabled" : ""}>&darr;</button>
-        <button type="button" class="btn btn-icon remove-zone" title="Remove zone">&times;</button>
-      `
-    );
+    const row = document.createElement("li");
+    row.className = "zone-row";
+    row.innerHTML = `
+      <span class="zone-row-n">${idx + 1}</span>
+      <span class="zone-row-name">${escapeHtml(z.zone_name)}</span>
+      <span class="zone-row-water"></span>
+      <input type="number" class="zone-minutes" value="${z.duration_minutes}"
+             min="0.5" step="0.5" aria-label="Minutes for ${escapeHtml(z.zone_name)}" />
+      <span class="inline-label">min</span>
+      <span class="zone-row-actions">
+        <button type="button" class="btn btn-icon move-up" title="Move earlier"
+                aria-label="Move ${escapeHtml(z.zone_name)} earlier" ${idx === 0 ? "disabled" : ""}>&uarr;</button>
+        <button type="button" class="btn btn-icon move-down" title="Move later"
+                aria-label="Move ${escapeHtml(z.zone_name)} later" ${idx === builder.zones.length - 1 ? "disabled" : ""}>&darr;</button>
+        <button type="button" class="btn btn-icon remove-zone" title="Remove"
+                aria-label="Remove ${escapeHtml(z.zone_name)}">&times;</button>
+      </span>
+    `;
+
+    const water = row.querySelector(".zone-row-water");
+    const showWater = () => {
+      water.textContent = `${fmtInches(inchesFor(z.duration_minutes))}/cycle`;
+    };
+    showWater();
 
     const input = row.querySelector(".zone-minutes");
     input.addEventListener("input", () => {
       z.duration_minutes = Number(input.value) || 0;
-      const per = inchesFor(z.duration_minutes);
-      row.querySelector(".water-note").innerHTML =
-        `${fmtInches(per)} per cycle &middot; ${fmtInches(per * builder.cycles.length)} per day`;
+      showWater();
       renderTimeline();
       renderCycles();
     });
@@ -1051,7 +1075,7 @@ function renderBuilderZones() {
       renderBuilder();
     });
 
-    list.appendChild(row);
+    rows.appendChild(row);
   });
 }
 
@@ -1744,11 +1768,11 @@ function renderRuns(runs) {
         .map((s) => {
           const outcome = stepOutcome(s.status);
           const label = STATUS_LABEL[s.status] || s.status;
-          return `<li class="step step-${outcome}"
+          return `<li class="run-step run-step-${outcome}"
                       title="${escapeHtml(`${s.zone_name || "Zone"} - ${label}`)}">
-            <span class="step-n">${s.step ?? "&bull;"}</span>
-            <span class="step-zone">${escapeHtml(s.zone_name || "Zone")}</span>
-            <span class="step-mark" aria-hidden="true">${marks[outcome]}</span>
+            <span class="run-step-n">${s.step ?? "&bull;"}</span>
+            <span class="run-step-zone">${escapeHtml(s.zone_name || "Zone")}</span>
+            <span class="run-step-mark" aria-hidden="true">${marks[outcome]}</span>
             <span class="sr-only">${escapeHtml(label)}</span>
           </li>`;
         })
