@@ -848,7 +848,7 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 14px 15px;
+  padding: 13px 14px;
 }
 .run-card.has-problem { border-left: 3px solid var(--critical); }
 
@@ -858,36 +858,34 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   justify-content: space-between;
   gap: 12px;
 }
-.run-headings { min-width: 0; }
-.run-name { font-weight: 650; font-size: 15px; }
-.run-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.run-name { font-weight: 650; font-size: 14px; }
+.run-meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
 
-/* The zones the program was made of, in run order, each with how it went. The
-   card above answers "did the program water"; this answers "which part didn't". */
-.run-zones {
+/* The step strip: one chip per zone, in the order they were meant to run, so a
+   gap in the middle of a program is obvious without reading any of it. */
+.step-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   list-style: none;
-  margin: 13px 0 0;
+  margin: 12px 0 0;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
 }
-.run-zone {
-  display: grid;
-  grid-template-columns: 22px 1fr auto auto;
+.step {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  font-size: 13px;
-  border-top: 1px solid var(--border);
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px 4px 4px;
+  font-size: 12px;
+  background: var(--surface);
 }
-.run-zone:first-child { border-top: none; }
-
-.run-zone-n {
+.step-n {
   display: grid;
   place-items: center;
-  width: 22px; height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
@@ -895,32 +893,32 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   background: var(--border);
   color: var(--muted);
 }
-.run-zone-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-zone-ran { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.run-zone-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.step-zone { font-weight: 600; }
+.step-mark { font-weight: 700; }
+
+.step-ok .step-n { background: var(--accent-soft); color: var(--accent); }
+.step-ok .step-mark { color: var(--accent); }
+.step-cut { border-color: var(--warn); }
+.step-cut .step-n { background: var(--warn-soft); color: var(--warn); }
+.step-cut .step-mark { color: var(--warn); }
+.step-bad { border-color: var(--critical); }
+.step-bad .step-n { background: var(--critical); color: #fff; }
+.step-bad .step-mark { color: var(--critical); }
+
+.run-problems {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
   font-size: 12px;
   color: var(--muted);
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.run-zone-mark { font-weight: 700; font-size: 13px; }
-
-.run-zone-ok .run-zone-n { background: var(--accent-soft); color: var(--accent); }
-.run-zone-ok .run-zone-mark { color: var(--accent); }
-.run-zone-cut .run-zone-n { background: var(--warn-soft); color: var(--warn); }
-.run-zone-cut .run-zone-mark,
-.run-zone-cut .run-zone-status { color: var(--warn); }
-.run-zone-bad .run-zone-n { background: var(--critical); color: #fff; }
-.run-zone-bad .run-zone-mark,
-.run-zone-bad .run-zone-status { color: var(--critical); font-weight: 600; }
-
-@media (max-width: 560px) {
-  /* The elapsed time is the first thing worth dropping when space is tight. */
-  .run-zone { grid-template-columns: 22px 1fr auto; }
-  .run-zone-ran { display: none; }
-}
+.run-problems strong { color: var(--text); font-weight: 650; }
 
 .chart-col.is-clickable { cursor: pointer; }
 .chart-col.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

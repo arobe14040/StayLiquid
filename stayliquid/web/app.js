@@ -1693,34 +1693,10 @@ function fmtClock(iso) {
   return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 }
 
-/** How the program itself fared - not a tally of zones, but did it do its job. */
-function programOutcome(run) {
-  if (run.whole_program) {
-    const status = run.steps[0].status;
-    return { label: STATUS_LABEL[status] || status, tone: "warn" };
-  }
-
-  const total = run.steps.length;
-  const done = run.done_count;
-  const hadFailure = run.problem_count > 0;
-
-  if (done === total) return { label: "Completed", tone: "ok" };
-  if (done === 0) {
-    return hadFailure
-      ? { label: "Failed", tone: "bad" }
-      : { label: "Stopped", tone: "warn" };
-  }
-  return {
-    label: `Partly completed - ${done} of ${total}`,
-    tone: hadFailure ? "bad" : "warn",
-  };
-}
-
 /**
- * One card per program run, shaped like the Programs tab: the program's name
- * and how it went, then the zones it was made of underneath. The headline is
- * the program's outcome - whether the watering happened - with the per-zone
- * detail there for when it didn't.
+ * One card per program execution, with its zones as numbered steps. The point
+ * is being able to see at a glance that steps 1-2 watered and 3-4 didn't,
+ * instead of reading four separate rows and working out they belonged together.
  */
 function renderRuns(runs) {
   const list = el("history-list");
@@ -1729,52 +1705,68 @@ function renderRuns(runs) {
     return;
   }
 
-  const TONE_PILL = { ok: "pill-quiet", warn: "pill-warn", bad: "pill-danger" };
-  const MARKS = { ok: "&check;", cut: "&ndash;", bad: "&times;" };
-
   list.innerHTML = "";
   runs.forEach((run) => {
-    const outcome = programOutcome(run);
+    const failed = run.problem_count > 0;
     const card = document.createElement("div");
-    card.className = `run-card${outcome.tone === "bad" ? " has-problem" : ""}`;
+    card.className = `run-card${failed ? " has-problem" : ""}`;
 
+    const when = fmtClock(run.started_at);
     const source = run.trigger_source === "manual" ? "started by hand" : "scheduled";
-    const zoneCount = run.whole_program ? 0 : run.steps.length;
 
-    const detail = [
-      zoneCount ? `${zoneCount} zone${zoneCount === 1 ? "" : "s"}` : null,
-      run.minutes ? `${fmtDuration(run.minutes)} of watering` : null,
-    ].filter(Boolean).join(" · ");
+    const cutShort = run.unfinished_count - run.problem_count;
+    let summary;
+    if (run.whole_program) {
+      summary = STATUS_LABEL[run.steps[0].status] || run.steps[0].status;
+    } else if (failed) {
+      summary = `${run.problem_count} of ${run.steps.length} didn't water`;
+    } else if (cutShort) {
+      summary = `${cutShort} of ${run.steps.length} cut short`;
+    } else {
+      summary = `all ${run.steps.length} zone${run.steps.length === 1 ? "" : "s"} watered`;
+    }
 
     card.innerHTML = `
       <div class="run-head">
-        <div class="run-headings">
+        <div>
           <div class="run-name">${escapeHtml(run.program_name)}</div>
-          <div class="run-meta">${escapeHtml(fmtClock(run.started_at))} &middot; ${source}</div>
-          ${detail ? `<div class="run-meta">${escapeHtml(detail)}</div>` : ""}
+          <div class="run-meta">${escapeHtml(when)} &middot; ${source}${
+            run.minutes ? ` &middot; ${fmtDuration(run.minutes)} of watering` : ""
+          }</div>
         </div>
-        <span class="pill ${TONE_PILL[outcome.tone]}">${escapeHtml(outcome.label)}</span>
+        <span class="pill ${failed ? "pill-danger" : cutShort ? "pill-warn" : "pill-quiet"}">${escapeHtml(summary)}</span>
       </div>
     `;
 
     if (!run.whole_program) {
-      const rows = run.steps
+      const marks = { ok: "&check;", cut: "&ndash;", bad: "&times;" };
+      const steps = run.steps
         .map((s) => {
-          const mark = stepOutcome(s.status);
+          const outcome = stepOutcome(s.status);
           const label = STATUS_LABEL[s.status] || s.status;
-          const ran = s.minutes ? fmtDuration(s.minutes) : "";
-          return `<li class="run-zone run-zone-${mark}">
-            <span class="run-zone-n">${s.step ?? "&bull;"}</span>
-            <span class="run-zone-name">${escapeHtml(s.zone_name || "Zone")}</span>
-            <span class="run-zone-ran">${escapeHtml(ran)}</span>
-            <span class="run-zone-status">
-              <span class="run-zone-mark" aria-hidden="true">${MARKS[mark]}</span>
-              ${escapeHtml(label)}
-            </span>
+          return `<li class="step step-${outcome}"
+                      title="${escapeHtml(`${s.zone_name || "Zone"} - ${label}`)}">
+            <span class="step-n">${s.step ?? "&bull;"}</span>
+            <span class="step-zone">${escapeHtml(s.zone_name || "Zone")}</span>
+            <span class="step-mark" aria-hidden="true">${marks[outcome]}</span>
+            <span class="sr-only">${escapeHtml(label)}</span>
           </li>`;
         })
         .join("");
-      card.insertAdjacentHTML("beforeend", `<ol class="run-zones">${rows}</ol>`);
+      card.insertAdjacentHTML("beforeend", `<ol class="step-strip">${steps}</ol>`);
+    }
+
+    // Spell the failures out underneath; the strip says which, not why.
+    const problems = run.steps.filter((s) => stepOutcome(s.status) !== "ok");
+    if (problems.length) {
+      const lines = problems
+        .map((s) => `<li><strong>${
+          s.step ? `Step ${s.step}` : "This run"
+        }${s.zone_name ? ` &middot; ${escapeHtml(s.zone_name)}` : ""}</strong> - ${
+          escapeHtml(STATUS_LABEL[s.status] || s.status)
+        }</li>`)
+        .join("");
+      card.insertAdjacentHTML("beforeend", `<ul class="run-problems">${lines}</ul>`);
     }
 
     list.appendChild(card);
