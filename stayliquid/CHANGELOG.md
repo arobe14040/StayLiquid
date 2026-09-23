@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0
+
+Zone states are pushed from Home Assistant now, instead of asked for on a timer.
+
+- **A valve switched off elsewhere is noticed straight away** - measured at
+  under half a second end to end, where before it took up to about 30 seconds.
+  The add-on holds one WebSocket connection to Home Assistant and subscribes to
+  its zone entities, so the change arrives rather than being polled for.
+- **The connection is never treated as the truth.** If it drops, the add-on
+  reconnects with a backing-off delay and everything falls back to asking Home
+  Assistant directly until it returns - slower, never stale, and never mistaken
+  for "the valve is off".
+- **A running zone is still checked outright about once a minute** even with the
+  stream healthy, so a dropped message can't leave it watering against a closed
+  valve.
+- The subscription follows the zone list, and re-reads current states whenever
+  it changes or the connection comes back.
+- `GET /api/zones/states` now answers from that live cache when it can, so the
+  UI's refresh no longer costs a call to Home Assistant, and reports whether
+  the stream was connected.
+- New dependency: `websockets`.
+
 ## 0.5.0
 
 A zone's test run is now a toggle you can turn off.

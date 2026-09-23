@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 VERSION = os.environ.get("APP_VERSION", "dev")
 
-from . import runner, storage
+from . import runner, state_watch, storage
 from .api.routes_programs import router as programs_router
 from .api.routes_status import router as status_router
 from .api.routes_zones import router as zones_router
@@ -24,6 +24,9 @@ async def lifespan(app: FastAPI):
 
     await runner.recover_orphaned_runs()
 
+    await state_watch.sync_watched_zones()
+    state_watch.watcher.start()
+
     timezone_name = await apply_timezone()
     scheduler.start()
     sync_all()
@@ -38,6 +41,7 @@ async def lifespan(app: FastAPI):
     # the run tasks, their own cleanup can no longer await a turn-off call.
     scheduler.shutdown(wait=False)
     await runner.stop_all("add-on shutting down")
+    await state_watch.watcher.stop()
 
 
 app = FastAPI(title="StayLiquid", lifespan=lifespan)

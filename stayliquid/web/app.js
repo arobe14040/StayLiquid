@@ -443,12 +443,13 @@ let lastCurrentRuns = [];
  */
 async function refreshZoneStates() {
   if (!zoneRows.size || !el("tab-zones")?.classList.contains("active")) return;
-  let states;
+  let payload;
   try {
-    states = await apiGet("api/zones/states");
+    payload = await apiGet("api/zones/states");
   } catch {
     return; // HA unreachable - keep showing the last thing we knew
   }
+  const states = payload.states || {};
   zoneRows.forEach((refs) => {
     if (refs.entityId in states) refs.reportedOn = states[refs.entityId] === "on";
   });

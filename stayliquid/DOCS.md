@@ -105,6 +105,28 @@ nothing is deleted or disabled, the schedule just resumes normally once the
 delay expires (or you hit Clear). Manual "Run now" and zone test-fires
 ignore the delay on purpose, so you can still hand-water if needed.
 
+## How it follows Home Assistant
+
+The add-on keeps one long-lived WebSocket connection to Home Assistant
+(`ws://supervisor/core/websocket`, authenticated with the `SUPERVISOR_TOKEN`
+the Supervisor injects) and subscribes to state changes for the zone entities.
+Home Assistant pushes a change the moment it happens, so switching a valve off
+anywhere else is reflected here immediately rather than on a timer.
+
+The connection is treated as a convenience, never as the source of truth:
+
+- If it drops, the add-on reconnects with a backing-off delay, and everything
+  that needs a zone's state asks Home Assistant directly in the meantime. A
+  dropped connection slows things down; it never looks like "the valve is off".
+- A running zone is also checked outright about once a minute even while the
+  stream is healthy, so a missed message can't leave it watering against a
+  closed valve.
+- The subscription follows the zone list - adding or removing a zone
+  re-subscribes and re-reads the current states.
+
+You'll see `Watching zone states over the Home Assistant event stream.` in the
+add-on log when the connection is up.
+
 ## Timezone
 
 Cycle times are local times: "08:00" means 8am where the sprinklers are. On
@@ -128,7 +150,8 @@ important than opening one.
 | Zone entity is `unavailable` in HA | Skipped before the valve is touched, logged `skipped_unavailable`. Other zones in the program continue. |
 | The turn-on call fails | That zone is logged `error` and the wait is abandoned immediately (it doesn't sit there for 40 minutes doing nothing). The rest of the program continues. |
 | The turn-off call fails | Retried 4 times, 5 seconds apart. If every attempt fails the run is logged `error` and a `GAVE UP closing ...` line is written to the log - worth an eye on. |
-| The zone is switched off elsewhere mid-run | Noticed within about 30 seconds; the run ends and is logged `stopped_external`. The add-on never reopens a valve somebody closed. Only a definite "off" counts - an unreachable API or an `unavailable` entity leaves the run alone. |
+| The zone is switched off elsewhere mid-run | Noticed in well under a second, because Home Assistant pushes the change. The run ends and is logged `stopped_external`. The add-on never reopens a valve somebody closed. Only a definite "off" counts - an unreachable API or an `unavailable` entity leaves the run alone. |
+| The event stream drops | The add-on reconnects on its own, and falls back to asking Home Assistant every 10 seconds until it does, so a running zone is still watched - just less promptly. |
 | HA or Supervisor restarts mid-run | The wait is unaffected; the turn-off at the end simply happens once HA answers again. |
 | The add-on is stopped or restarted mid-run | Open valves are closed during shutdown, before the run tasks are torn down, and their runs are logged `interrupted`. |
 | The add-on is killed outright, or the host loses power | Nothing can run at that moment, so a valve can be left open. On next startup any run still marked `running` is treated as exactly that: the add-on closes that zone's valve and logs the run `interrupted`. Only zones this add-on opened are touched, so a zone you switched on by hand is left alone. |

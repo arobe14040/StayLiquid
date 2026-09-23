@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import ha_client, storage
+from .. import ha_client, state_watch, storage
 from ..runner import run_zone_manual, stop_zone
 
 router = APIRouter()
@@ -37,18 +37,30 @@ async def list_zones():
 
 @router.get("/zones/states")
 async def zone_states():
-    """Live on/off for the configured zones, so the UI shows the valve's actual
-    state rather than whatever it was when the page was drawn. Cheap enough to
-    poll: one call to Home Assistant, filtered down to the zones in use."""
+    """Current on/off for the configured zones.
+
+    Served from the event-stream cache when it's connected, which costs nothing
+    and is as current as Home Assistant itself. Falls back to asking outright,
+    so a dropped stream degrades to slower rather than to stale.
+    """
     zones = await run_in_threadpool(storage.list_zones)
     wanted = {z["entity_id"] for z in zones}
     if not wanted:
-        return {}
+        return {"live": state_watch.watcher.is_live(), "states": {}}
+
+    if state_watch.watcher.is_live():
+        known = state_watch.watcher.known_states()
+        if wanted <= known.keys():
+            return {"live": True, "states": {k: known[k] for k in wanted}}
+
     try:
         entities = await ha_client.get_zone_candidate_entities()
     except Exception:
         raise HTTPException(503, "Could not reach Home Assistant.")
-    return {e["entity_id"]: e["state"] for e in entities if e["entity_id"] in wanted}
+    return {
+        "live": False,
+        "states": {e["entity_id"]: e["state"] for e in entities if e["entity_id"] in wanted},
+    }
 
 
 @router.post("/zones")
@@ -56,7 +68,9 @@ async def create_zone(body: ZoneCreate):
     existing = await run_in_threadpool(storage.list_zones)
     if any(z["entity_id"] == body.entity_id for z in existing):
         raise HTTPException(400, "That entity is already a zone.")
-    return await run_in_threadpool(storage.create_zone, body.entity_id, body.name)
+    zone = await run_in_threadpool(storage.create_zone, body.entity_id, body.name)
+    await state_watch.sync_watched_zones()
+    return zone
 
 
 @router.put("/zones/{zone_id}")
@@ -70,6 +84,7 @@ async def update_zone(zone_id: int, body: ZoneUpdate):
 @router.delete("/zones/{zone_id}")
 async def delete_zone(zone_id: int):
     await run_in_threadpool(storage.delete_zone, zone_id)
+    await state_watch.sync_watched_zones()
     return {"ok": True}
 
 

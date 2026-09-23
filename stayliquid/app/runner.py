@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from starlette.concurrency import run_in_threadpool
 
-from . import ha_client, storage
+from . import ha_client, state_watch, storage
 
 log = logging.getLogger("stayliquid.runner")
 
@@ -18,11 +18,15 @@ log = logging.getLogger("stayliquid.runner")
 TURN_OFF_ATTEMPTS = 4
 TURN_OFF_RETRY_SECONDS = 5
 
-# How often a running zone is checked against Home Assistant, and how long to
-# leave it alone first so a not-yet-updated state doesn't read as "switched
-# off" the instant we turned it on.
+# Polling cadence when there's no event stream to lean on, and how long to leave
+# a zone alone first so a not-yet-updated state doesn't read as "switched off"
+# the instant we turned it on.
 STATE_CHECK_SECONDS = 10
 STATE_CHECK_GRACE_SECONDS = 20
+
+# Even with events arriving, ask outright now and then. A missed message would
+# otherwise mean watering to completion against a closed valve.
+LIVE_SANITY_CHECK_SECONDS = 60
 
 # entity_id -> asyncio.Lock, so two programs can never fight over one zone
 _zone_locks: dict[str, asyncio.Lock] = {}
@@ -72,6 +76,13 @@ async def _entity_unavailable(entity_id: str) -> bool:
     """True only when Home Assistant positively reports the entity as missing
     or unavailable. If the check itself fails we return False and let the
     turn_on attempt produce the real error, rather than skipping a good zone."""
+    # The event stream already holds this, and it's as current as Home
+    # Assistant itself, so there's no reason to ask again over REST.
+    if state_watch.watcher.is_live():
+        cached = state_watch.watcher.state_of(entity_id)
+        if cached is not None:
+            return cached in ("unavailable", "unknown")
+
     try:
         state = await ha_client.get_state(entity_id)
     except Exception:
@@ -93,30 +104,70 @@ async def _reported_off(entity_id: str) -> bool:
     return bool(state) and state.get("state") == "off"
 
 
+async def _first_set(*events: asyncio.Event, timeout: float) -> asyncio.Event | None:
+    """Wait for whichever event is set first. None if the timeout wins."""
+    waiters = {asyncio.create_task(event.wait()): event for event in events}
+    try:
+        done, _ = await asyncio.wait(
+            waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+        )
+        return next((waiters[task] for task in done), None)
+    finally:
+        for task in waiters:
+            task.cancel()
+
+
 async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Event,
                         seconds: float) -> str:
-    """Hold for the run's duration, watching for either a stop request or the
-    valve being switched off somewhere else. Returns the status to log."""
+    """Hold for the run's duration, ending early if the run is stopped here or
+    the valve is switched off somewhere else. Returns the status to log.
+
+    Home Assistant pushes state changes, so a switch-off elsewhere normally
+    arrives as an event within a moment. The periodic check is what covers the
+    times it can't: the event stream being down, or a message going astray.
+    """
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline = started + seconds
 
-    while True:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            return "completed"
+    switched_off = asyncio.Event()
 
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=min(STATE_CHECK_SECONDS, remaining))
-            return "stopped"
-        except asyncio.TimeoutError:
-            pass
+    def on_state_change(changed_entity: str, state: str) -> None:
+        # Listeners only fire on an actual change, and this one is registered
+        # after the turn-on call, so an "off" here happened after we opened the
+        # valve - no settling period needed on this path.
+        if changed_entity == entity_id and state == "off":
+            switched_off.set()
 
-        if loop.time() - started < STATE_CHECK_GRACE_SECONDS:
-            continue
-        if await _reported_off(entity_id):
-            log.info("%s was switched off outside StayLiquid - ending the run.", zone_name)
-            return "stopped_external"
+    state_watch.watcher.add_listener(on_state_change)
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return "completed"
+
+            live = state_watch.watcher.is_live()
+            gap = LIVE_SANITY_CHECK_SECONDS if live else STATE_CHECK_SECONDS
+            triggered = await _first_set(
+                stop_event, switched_off, timeout=min(gap, remaining)
+            )
+
+            if triggered is stop_event:
+                return "stopped"
+            if triggered is switched_off:
+                log.info("%s was switched off outside StayLiquid - ending the run.", zone_name)
+                return "stopped_external"
+
+            if loop.time() - started < STATE_CHECK_GRACE_SECONDS:
+                continue
+            if await _reported_off(entity_id):
+                log.info(
+                    "%s is off in Home Assistant but no event said so - ending the run.",
+                    zone_name,
+                )
+                return "stopped_external"
+    finally:
+        state_watch.watcher.remove_listener(on_state_change)
 
 
 def stop_zone(entity_id: str) -> bool:
