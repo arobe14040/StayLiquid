@@ -281,6 +281,13 @@ def stop_zone(entity_id: str) -> bool:
     return True
 
 
+async def turn_zone_off(entity_id: str, zone_name: str) -> bool:
+    """Close a valve StayLiquid isn't running - one switched on in Home
+    Assistant, or left open by something else. Stopping a run of our own goes
+    through stop_zone instead, so its logging and retries stay in one place."""
+    return await _close_valve(entity_id, zone_name)
+
+
 async def stop_all(reason: str) -> int:
     """Close every valve we currently believe is open.
 

@@ -290,6 +290,108 @@ function fmtRelative(iso) {
   return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+// Turning a zone on from here always runs it for a fixed spell rather than
+// opening the valve indefinitely - a switch with no timer behind it is one
+// forgotten tap away from watering all night.
+const QUICK_RUN_MINUTES = 10;
+
+const zoneTiles = new Map();   // zone id -> the tile's elements
+
+/**
+ * The zone switches. Built once and then patched, so the poll can't rebuild
+ * the row someone is mid-tap on, and so a pending toggle isn't yanked back by
+ * a status response that predates it.
+ */
+function renderZonePanel(status) {
+  const zones = status.zones || [];
+  const host = el("zone-toggles");
+  const paused = status.pause?.active;
+
+  el("zone-panel-hint").textContent = zones.length
+    ? `Turning one on waters it for ${QUICK_RUN_MINUTES} minutes. Shows the valve's real state, however it was opened.`
+    : "";
+
+  const on = zones.filter((z) => z.state === "on").length;
+  const count = el("zone-panel-count");
+  count.textContent = !zones.length ? "none yet" : on ? `${on} open` : "all closed";
+  count.className = `pill ${on ? "pill-on" : "pill-quiet"}`;
+
+  if (!zones.length) {
+    host.innerHTML = `<div class="empty">No zones yet - add them on the Zones tab.</div>`;
+    zoneTiles.clear();
+    return;
+  }
+
+  // Rebuild only when the set of zones changes, not on every poll.
+  const signature = zones.map((z) => `${z.id}:${z.name}`).join("|");
+  if (host.dataset.signature !== signature) {
+    host.dataset.signature = signature;
+    host.innerHTML = "";
+    zoneTiles.clear();
+
+    zones.forEach((zone) => {
+      const tile = document.createElement("div");
+      tile.className = "zone-tile";
+      tile.innerHTML = `
+        <div class="zone-tile-meta">
+          <div class="zone-tile-name">${escapeHtml(zone.name)}</div>
+          <div class="zone-tile-state"></div>
+        </div>
+        <button type="button" class="switch-toggle" role="switch" aria-checked="false">
+          <span class="switch-track"><span class="switch-knob"></span></span>
+        </button>
+      `;
+      const button = tile.querySelector(".switch-toggle");
+      button.addEventListener("click", () => toggleZone(zone.id, button));
+      zoneTiles.set(zone.id, { tile, button, state: tile.querySelector(".zone-tile-state") });
+      host.appendChild(tile);
+    });
+  }
+
+  zones.forEach((zone) => {
+    const refs = zoneTiles.get(zone.id);
+    if (!refs || refs.button.dataset.pending === "true") return;
+
+    const isOn = zone.state === "on";
+    const unknown = zone.state == null;
+
+    refs.button.setAttribute("aria-checked", String(isOn));
+    refs.button.setAttribute("aria-label", `${isOn ? "Turn off" : "Turn on"} ${zone.name}`);
+    refs.button.disabled = unknown || (!isOn && (paused || !zone.enabled));
+    refs.tile.classList.toggle("is-on", isOn);
+    refs.tile.classList.toggle("is-unknown", unknown);
+
+    refs.state.textContent = unknown
+      ? "State unknown"
+      : isOn
+        ? zone.running ? "Watering" : "On - opened elsewhere"
+        : !zone.enabled ? "Disabled" : paused ? "Paused" : "Off";
+  });
+}
+
+function toggleZone(zoneId, button) {
+  const turningOn = button.getAttribute("aria-checked") !== "true";
+
+  // Flip straight away and hold that until the next poll confirms it; waiting
+  // for the round trip makes the switch feel broken.
+  button.dataset.pending = "true";
+  button.setAttribute("aria-checked", String(turningOn));
+  button.closest(".zone-tile").classList.toggle("is-on", turningOn);
+
+  guard(async () => {
+    try {
+      if (turningOn) {
+        await apiPost(`api/zones/${zoneId}/run`, { minutes: QUICK_RUN_MINUTES });
+      } else {
+        await apiPost(`api/zones/${zoneId}/stop`, {});
+      }
+    } finally {
+      delete button.dataset.pending;
+    }
+    await loadDashboard();
+  });
+}
+
 function renderPause(status) {
   const paused = status.pause?.active;
   const banner = el("pause-banner");
@@ -390,6 +492,7 @@ async function loadDashboard() {
     pill.hidden = true;
   }
 
+  renderZonePanel(status);
   renderPause(status);
 
   const runs = status.current_runs;
@@ -1669,6 +1772,21 @@ function renderRuns(runs) {
     list.appendChild(card);
   });
 }
+
+// Remember whether the zone panel was left open. localStorage can throw in a
+// locked-down browser, and a forgotten preference is not worth an exception.
+(() => {
+  const panel = el("zone-panel");
+  if (!panel) return;
+  try {
+    panel.open = localStorage.getItem("zonePanelOpen") !== "false";
+  } catch { /* fine - it just starts open */ }
+  panel.addEventListener("toggle", () => {
+    try {
+      localStorage.setItem("zonePanelOpen", String(panel.open));
+    } catch { /* ignore */ }
+  });
+})();
 
 on("day-prev", "click", () => guard(() => showDay(shiftDay(historyDay, -1))));
 on("day-next", "click", () => guard(() => showDay(shiftDay(historyDay, 1))));

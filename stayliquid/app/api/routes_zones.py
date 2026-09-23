@@ -44,23 +44,8 @@ async def zone_states():
     so a dropped stream degrades to slower rather than to stale.
     """
     zones = await run_in_threadpool(storage.list_zones)
-    wanted = {z["entity_id"] for z in zones}
-    if not wanted:
-        return {"live": state_watch.watcher.is_live(), "states": {}}
-
-    if state_watch.watcher.is_live():
-        known = state_watch.watcher.known_states()
-        if wanted <= known.keys():
-            return {"live": True, "states": {k: known[k] for k in wanted}}
-
-    try:
-        entities = await ha_client.get_zone_candidate_entities()
-    except Exception:
-        raise HTTPException(503, "Could not reach Home Assistant.")
-    return {
-        "live": False,
-        "states": {e["entity_id"]: e["state"] for e in entities if e["entity_id"] in wanted},
-    }
+    states, live = await state_watch.zone_states({z["entity_id"] for z in zones})
+    return {"live": live, "states": states}
 
 
 @router.post("/zones")
@@ -102,9 +87,17 @@ async def run_zone_now(zone_id: int, body: ManualRun):
 
 @router.post("/zones/{zone_id}/stop")
 async def stop_zone_now(zone_id: int):
-    """Cut a run short. The valve closes as part of that run's own cleanup."""
+    """Turn a zone off, whoever opened it.
+
+    A run of ours is cut short and its own cleanup closes the valve. A valve
+    that's open without a run - switched on in Home Assistant, say - is closed
+    here, so this is a dependable "off" rather than only a cancel.
+    """
     zone = await _get_zone(zone_id)
-    return {"ok": True, "stopped": stop_zone(zone["entity_id"])}
+    stopped = stop_zone(zone["entity_id"])
+    if not stopped:
+        await runner.turn_zone_off(zone["entity_id"], zone["name"])
+    return {"ok": True, "stopped": stopped}
 
 
 async def _get_zone(zone_id: int) -> dict:

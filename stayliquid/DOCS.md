@@ -17,7 +17,8 @@
   program might run three cycles a day; established turf runs one. The
   Programs tab previews exactly when each zone starts and warns you if one
   cycle would still be running when the next is due to begin.
-- **Dashboard** - what's running right now, the next few scheduled runs, and
+- **Dashboard** - a collapsible panel of zone switches at the top, then what's
+  running right now, the next few scheduled runs, and
   rain-delay buttons (12h / 24h / 48h / 72h / custom). A rain delay suspends
   every *scheduled* run until it expires; manual "Run now" / zone test-fires
   still work during a delay.
@@ -97,6 +98,23 @@ Set per-program in the **Zone run mode** field:
   support multiple zones open at once (most residential setups).
 - **All zones together** - every zone in the program turns on immediately;
   each turns off independently once its own duration elapses.
+
+## Zone switches
+
+The panel at the top of the Dashboard is a switch per zone, for the times you
+just want a zone on now - moving a sprinkler, checking a head, watering a dry
+patch. Collapse it with the heading if you'd rather lead with what's running;
+it stays how you left it.
+
+- **It shows the valve, not just what the add-on is doing.** A zone switched on
+  in Home Assistant or by hand reads as on here, labelled *On - opened
+  elsewhere*, and switching it off here closes it.
+- **Turning one on waters it for 10 minutes**, not indefinitely. A switch with
+  no timer behind it is one forgotten tap away from watering all night. For a
+  specific length, use **Test run** on the Zones tab.
+- A zone whose state can't be read shows as *State unknown* and can't be
+  switched, rather than guessing. Disabled zones and a paused system are shown
+  and locked for the same reason.
 
 ## Pause
 

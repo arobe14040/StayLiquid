@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import random
+import time
 from collections.abc import Callable
 
 import websockets
@@ -256,6 +257,40 @@ class ZoneStateWatcher:
 
 
 watcher = ZoneStateWatcher()
+
+
+# When the event stream is down, state has to be asked for - but the dashboard
+# polls every few seconds, and turning that into a request to Home Assistant
+# each time would be worse than the problem. One fetch is shared until it ages
+# out.
+_FALLBACK_TTL_SECONDS = 20
+_fallback = {"fetched_at": 0.0, "states": {}}
+
+
+async def zone_states(entity_ids: set[str]) -> tuple[dict[str, str | None], bool]:
+    """Current state of the given entities, and whether it came from the live
+    stream. Unknown entities come back as None rather than being left out, so
+    callers can tell "off" from "no idea"."""
+    if not entity_ids:
+        return {}, watcher.is_live()
+
+    if watcher.is_live():
+        known = watcher.known_states()
+        if entity_ids <= known.keys():
+            return {k: known[k] for k in entity_ids}, True
+
+    now = time.monotonic()
+    if now - _fallback["fetched_at"] > _FALLBACK_TTL_SECONDS:
+        from . import ha_client
+
+        try:
+            entities = await ha_client.get_zone_candidate_entities()
+            _fallback["states"] = {e["entity_id"]: e["state"] for e in entities}
+            _fallback["fetched_at"] = now
+        except Exception:
+            log.debug("Could not refresh zone states from Home Assistant.")
+
+    return {k: _fallback["states"].get(k) for k in entity_ids}, False
 
 
 async def sync_watched_zones() -> None:

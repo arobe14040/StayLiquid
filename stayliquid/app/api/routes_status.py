@@ -7,7 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import storage
 from ..presets import inches_for
-from .. import runner
+from .. import runner, state_watch
 from ..runner import current_runs, rain_delay_active
 from ..scheduler import next_events, scheduler
 
@@ -39,7 +39,26 @@ class PauseIn(BaseModel):
 async def status():
     delay = await run_in_threadpool(storage.get_rain_delay)
     active = await rain_delay_active()
+
+    # The dashboard's zone switches need the valves' real state, and it already
+    # polls this - one call beats a second one alongside it.
+    zones = await run_in_threadpool(storage.list_zones)
+    states, live = await state_watch.zone_states({z["entity_id"] for z in zones})
+    running_zone_ids = {r["zone_id"] for r in current_runs}
+
     return {
+        "zones": [
+            {
+                "id": z["id"],
+                "name": z["name"],
+                "entity_id": z["entity_id"],
+                "enabled": bool(z["enabled"]),
+                "state": states.get(z["entity_id"]),
+                "running": z["id"] in running_zone_ids,
+            }
+            for z in zones
+        ],
+        "zones_live": live,
         "version": os.environ.get("APP_VERSION", "dev"),
         "pause": await runner.pause_state(),
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},

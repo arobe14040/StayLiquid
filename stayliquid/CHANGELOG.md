@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0
+
+A panel of zone switches at the top of the Dashboard.
+
+- One switch per zone, for the times you just want a zone on now. Collapse it
+  with the heading and it stays how you left it.
+- **It shows the valve, not just what the add-on is doing.** A zone switched on
+  in Home Assistant or by hand reads as on here - *On - opened elsewhere* - and
+  switching it off here closes it. Turning a zone off is now a dependable off
+  rather than only cancelling a run of ours.
+- **Turning one on waters it for 10 minutes**, not indefinitely: a switch with
+  no timer behind it is one forgotten tap away from watering all night. The
+  Zones tab still has **Test run** for a specific length.
+- A zone whose state can't be read shows as *State unknown* and can't be
+  switched, rather than guessing. Disabled zones and a paused system are shown
+  and locked.
+- `GET /api/status` now carries the zones and their states, so the Dashboard's
+  existing poll covers the switches without a second request. When the event
+  stream is down the fallback is shared and rate-limited, so polling can't turn
+  into a request to Home Assistant every few seconds.
+
 ## 0.8.0
 
 The History tab now reads as runs rather than as a list of zone rows.
