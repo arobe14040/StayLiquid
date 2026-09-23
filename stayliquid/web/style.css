@@ -194,6 +194,7 @@ body {
   color: var(--muted);
 }
 .btn-icon:hover { color: var(--text); background: var(--surface-2); }
+.btn-icon svg { display: block; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -602,6 +603,7 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 .confirm-body h2 { margin: 0 0 6px; font-size: 16px; }
 .confirm-body p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 
+.confirm-field { margin-top: 14px; }
 .confirm-foot { justify-content: flex-end; }
 .confirm-foot .btn { min-width: 92px; justify-content: center; }
 

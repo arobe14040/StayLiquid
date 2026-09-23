@@ -117,30 +117,52 @@ function toast(message, kind = "ok") {
 
 let settleConfirm = null;
 
-/** Ask the user to confirm something. Resolves true if they go ahead. */
-function askConfirm({ title, message, confirmLabel = "Confirm", danger = false }) {
+/**
+ * Shared dialog. With `field` it collects a line of text and resolves to the
+ * trimmed string (or null if dismissed); without, it resolves true/false.
+ */
+function openDialog({ title, message, confirmLabel = "Confirm", danger = false, field = null }) {
   const modal = el("confirm-modal");
-  // If the markup isn't there (a stale index.html), a browser prompt is still
-  // better than silently destroying something.
-  if (!modal) return Promise.resolve(window.confirm(message));
+  // If the markup isn't there (a stale index.html), fall back to the browser's
+  // own dialogs rather than silently doing nothing.
+  if (!modal) {
+    return Promise.resolve(field ? window.prompt(message, field.value ?? "") : window.confirm(message));
+  }
 
   return new Promise((resolve) => {
     // A second request would strand the first promise, so close that one out.
-    if (settleConfirm) settleConfirm(false);
+    if (settleConfirm) settleConfirm(null);
 
     const previous = document.activeElement;
     el("confirm-title").textContent = title;
     el("confirm-message").textContent = message;
+    modal.querySelector(".modal").setAttribute("role", field ? "dialog" : "alertdialog");
 
     const ok = el("confirm-ok");
     ok.textContent = confirmLabel;
     ok.className = `btn ${danger ? "btn-danger-solid" : "btn-primary"}`;
+    ok.disabled = false;
+
+    const fieldWrap = el("confirm-field");
+    const input = el("confirm-input");
+    fieldWrap.hidden = !field;
+    if (field) {
+      el("confirm-field-label").textContent = field.label;
+      input.value = field.value ?? "";
+      input.placeholder = field.placeholder ?? "";
+      ok.disabled = !input.value.trim();
+    }
 
     modal.hidden = false;
     document.body.style.overflow = "hidden";
-    // Focus the safe choice when the action can't be undone, so a stray Enter
-    // cancels instead of deleting.
-    (danger ? el("confirm-cancel") : ok).focus();
+    if (field) {
+      input.focus();
+      input.select();
+    } else {
+      // Focus the safe choice when the action can't be undone, so a stray Enter
+      // cancels instead of deleting.
+      (danger ? el("confirm-cancel") : ok).focus();
+    }
 
     settleConfirm = (answer) => {
       settleConfirm = null;
@@ -153,10 +175,37 @@ function askConfirm({ title, message, confirmLabel = "Confirm", danger = false }
   });
 }
 
-on("confirm-ok", "click", () => settleConfirm?.(true));
-on("confirm-cancel", "click", () => settleConfirm?.(false));
+/** Resolves true if the user goes ahead. */
+function askConfirm(options) {
+  return openDialog(options).then((answer) => answer === true);
+}
+
+/** Resolves the trimmed text, or null if the user backed out. */
+function askText(options) {
+  return openDialog({ ...options, field: options.field ?? { label: "", value: "" } })
+    .then((answer) => (typeof answer === "string" && answer.trim() ? answer.trim() : null));
+}
+
+function submitDialog() {
+  const input = el("confirm-input");
+  if (el("confirm-field").hidden) return settleConfirm?.(true);
+  const value = input.value.trim();
+  if (value) settleConfirm?.(value);
+}
+
+on("confirm-ok", "click", submitDialog);
+on("confirm-cancel", "click", () => settleConfirm?.(null));
 on("confirm-modal", "click", (e) => {
-  if (e.target === el("confirm-modal")) settleConfirm?.(false);
+  if (e.target === el("confirm-modal")) settleConfirm?.(null);
+});
+on("confirm-input", "input", (e) => {
+  el("confirm-ok").disabled = !e.target.value.trim();
+});
+on("confirm-input", "keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitDialog();
+  }
 });
 
 async function guard(fn, successMessage) {
@@ -406,6 +455,13 @@ async function loadZonesTab() {
       escapeHtml(z.entity_id),
       `
         ${statePill}
+        <button class="btn btn-icon rename-zone" title="Rename zone" aria-label="Rename ${escapeHtml(z.name)}">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
+            <path d="M14 6l4 4" />
+          </svg>
+        </button>
         <input type="number" class="run-minutes" value="5" min="0.5" step="0.5" style="width:70px" />
         <button class="btn btn-small run-zone">Test run</button>
         <button class="btn btn-small toggle-zone">${z.enabled ? "Disable" : "Enable"}</button>
@@ -419,6 +475,20 @@ async function loadZonesTab() {
         await loadDashboard();
         switchTab("dashboard");
       }, `${z.name} running.`)
+    );
+    row.querySelector(".rename-zone").addEventListener("click", () =>
+      guard(async () => {
+        const name = await askText({
+          title: "Rename zone",
+          message: "Programs using this zone follow the new name.",
+          confirmLabel: "Save name",
+          field: { label: "Zone name", value: z.name, placeholder: "e.g. Front lawn" },
+        });
+        if (!name || name === z.name) return;
+        await apiPut(`api/zones/${z.id}`, { name });
+        await loadZonesTab();
+        toast(`Renamed to ${name}.`);
+      })
     );
     row.querySelector(".toggle-zone").addEventListener("click", () =>
       guard(async () => {
@@ -1032,7 +1102,7 @@ on("program-modal", "click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   // The confirm dialog sits on top, so it gets the key first.
-  if (settleConfirm) return settleConfirm(false);
+  if (settleConfirm) return settleConfirm(null);
   if (!el("program-modal").hidden) closeModal(false);
 });
 

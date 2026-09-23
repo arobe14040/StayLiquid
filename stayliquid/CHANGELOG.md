@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2
+
+- **Zones can be renamed.** A pencil button on each zone opens a rename dialog
+  with the current name selected, ready to type over. Programs using the zone
+  follow the new name - the name lives in one place, so nothing needs updating
+  afterwards.
+- The dialog added in 0.4.1 now also handles a line of text, so renaming uses
+  the same styled dialog as everything else rather than the browser's prompt.
+  Save is disabled until the name has something in it, Enter saves, Escape
+  backs out.
+
 ## 0.4.1
 
 Replaces the browser's confirm boxes with dialogs that match the app.

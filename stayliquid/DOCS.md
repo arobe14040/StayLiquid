@@ -3,7 +3,8 @@
 ## What it does
 
 - **Zones** - wrap any `switch.*` or `valve.*` entity that controls a
-  sprinkler valve as a named zone.
+  sprinkler valve as a named zone. The pencil next to a zone renames it;
+  programs using it follow the new name straight away.
 - **Programs** - a schedule (specific weekdays, or "every N days"), one or
   more **daily cycles**, and an ordered list of zones with a duration each.
   Each program can be built from a lawn growth-stage preset or fully custom,
