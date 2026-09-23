@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.1
+
+History run cards now lead with the program, not a count of zones.
+
+- **The headline is the program's own outcome** - Completed, Partly completed,
+  Failed, or why it was skipped - instead of a zone tally like "4 of 6 didn't
+  water". Whether the watering happened is the question the card should answer.
+- **The zones are listed underneath**, in run order, each with how long it ran
+  and what became of it. The chip strip they replace was compact but made you
+  hover to find out what actually went wrong.
+- The card follows the Programs tab's shape: name, then the run's details on
+  muted lines beneath, so the two pages read the same way.
+
 ## 0.9.0
 
 A panel of zone switches at the top of the Dashboard.
