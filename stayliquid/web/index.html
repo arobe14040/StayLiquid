@@ -34,10 +34,15 @@
     <!-- ---------------------------------------------------------- Dashboard -->
     <section id="tab-dashboard" class="tab-panel active">
 
+      <div id="pause-banner" class="attention is-warning" hidden></div>
+
       <div class="card card-hero">
         <div class="hero-head">
           <h2>Running now</h2>
-          <span id="running-count" class="pill pill-quiet">Idle</span>
+          <div class="hero-actions">
+            <span id="running-count" class="pill pill-quiet">Idle</span>
+            <button class="btn btn-small" id="pause-btn" hidden>Pause watering</button>
+          </div>
         </div>
         <div id="current-runs" class="stack"></div>
       </div>

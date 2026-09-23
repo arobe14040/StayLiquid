@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0
+
+**Pause watering** on the Dashboard, for when you need the pressure indoors.
+
+- Shuts every open valve at once and holds the schedule. It's system-wide on
+  purpose: pausing one zone would just hand the pressure to the next zone in
+  the program.
+- **A run keeps the time it still owes.** A zone six minutes into a twenty
+  minute run resumes with fourteen left - not twenty, and not nothing.
+- Programs due during a pause are skipped and logged, rather than queued to run
+  hours later on top of the next cycle. Manual runs are refused while paused
+  instead of quietly waiting for a resume that may not come.
+- **It expires by itself** (two hours by default, shown on the Dashboard), so
+  one left on by accident can't stop the lawn being watered indefinitely. On
+  expiry, held runs are ended and logged rather than valves reopening after a
+  long unattended gap.
+- It survives a restart, so restarting the add-on can't start watering again
+  while you're still using the water.
+- New `POST /api/pause` and `DELETE /api/pause`.
+
 ## 0.6.0
 
 Zone states are pushed from Home Assistant now, instead of asked for on a timer.

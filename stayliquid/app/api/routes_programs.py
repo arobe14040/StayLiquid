@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from .. import presets, storage
+from .. import presets, runner, storage
 from ..runner import run_program
 from ..scheduler import remove_program, sync_program
 
@@ -128,5 +128,7 @@ async def run_program_now(program_id: int):
     program = await run_in_threadpool(storage.get_program, program_id)
     if not program:
         raise HTTPException(404, "Program not found.")
+    if (await runner.pause_state())["active"]:
+        raise HTTPException(409, "Watering is paused. Resume it first.")
     asyncio.create_task(run_program(program_id, trigger_source="manual"))
     return {"ok": True}

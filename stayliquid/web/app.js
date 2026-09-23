@@ -21,6 +21,8 @@ const STATUS_PILL = {
   error: "pill-danger",
   interrupted: "pill-warn",
   stopped: "pill-quiet",
+  paused_expired: "pill-warn",
+  skipped_paused: "pill-warn",
   stopped_external: "pill-quiet",
   skipped_rain_delay: "pill-warn",
   skipped_unavailable: "pill-warn",
@@ -31,6 +33,8 @@ const STATUS_LABEL = {
   error: "Error",
   interrupted: "Interrupted - add-on restarted",
   stopped: "Stopped early",
+  paused_expired: "Ended - paused too long",
+  skipped_paused: "Skipped - watering paused",
   stopped_external: "Switched off in Home Assistant",
   skipped_rain_delay: "Skipped - rain delay",
   skipped_unavailable: "Skipped - zone unavailable",
@@ -286,6 +290,37 @@ function fmtRelative(iso) {
   return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+function renderPause(status) {
+  const paused = status.pause?.active;
+  const banner = el("pause-banner");
+  const button = el("pause-btn");
+
+  banner.hidden = !paused;
+  if (paused) {
+    banner.innerHTML = `
+      <div class="attention-head">
+        <span class="attention-icon" aria-hidden="true">&#9208;</span>
+        <h2>Watering is paused</h2>
+      </div>
+      <p class="hint">
+        Every valve is shut and the schedule is on hold. Runs already going keep
+        the time they still owe. Resumes on its own at
+        ${escapeHtml(fmtDateTime(status.pause.until))} if you forget.
+      </p>
+      <button class="btn btn-primary" id="resume-btn">Resume watering</button>
+    `;
+    banner.querySelector("#resume-btn").addEventListener("click", () =>
+      guard(async () => {
+        await apiDelete("api/pause");
+        await loadDashboard();
+      }, "Watering resumed.")
+    );
+  }
+
+  // Pausing is only meaningful when something would otherwise be watering.
+  button.hidden = paused || !status.current_runs.length;
+}
+
 function rowItem(primary, secondary, actionsHtml) {
   const div = document.createElement("div");
   div.className = "row-item";
@@ -355,31 +390,47 @@ async function loadDashboard() {
     pill.hidden = true;
   }
 
+  renderPause(status);
+
   const runs = status.current_runs;
+  const paused = status.pause?.active;
   const countPill = el("running-count");
-  countPill.textContent = runs.length
-    ? `${runs.length} zone${runs.length === 1 ? "" : "s"} watering`
-    : "Idle";
-  countPill.className = `pill ${runs.length ? "pill-on" : "pill-quiet"}`;
+  countPill.textContent = !runs.length
+    ? "Idle"
+    : paused
+      ? `${runs.length} zone${runs.length === 1 ? "" : "s"} held`
+      : `${runs.length} zone${runs.length === 1 ? "" : "s"} watering`;
+  countPill.className = `pill ${runs.length && !paused ? "pill-on" : "pill-quiet"}`;
 
   const runsEl = el("current-runs");
   if (!runs.length) {
-    emptyState(runsEl, "Nothing is watering right now.");
+    emptyState(runsEl, paused
+      ? "Nothing is watering - the schedule is paused."
+      : "Nothing is watering right now.");
   } else {
     runsEl.innerHTML = "";
     for (const r of runs) {
+      // Count down from what the run is still owed, not from the wall clock -
+      // the clock keeps moving through a pause but the valve is shut.
       const totalMs = r.duration_minutes * 60000;
-      const elapsed = Date.now() - new Date(r.started_at).getTime();
-      const pct = Math.min(100, Math.max(0, (elapsed / totalMs) * 100));
-      const leftMin = Math.max(0, Math.ceil((totalMs - elapsed) / 60000));
+      const owedMs = (r.seconds_left ?? r.duration_minutes * 60) * 1000;
+      const sinceSegment = Date.now() - new Date(r.resumed_at || r.started_at).getTime();
+      const leftMs = Math.max(0, r.paused ? owedMs : owedMs - sinceSegment);
+      const pct = Math.min(100, Math.max(0, ((totalMs - leftMs) / totalMs) * 100));
+      const leftMin = Math.max(0, Math.ceil(leftMs / 60000));
+
       const row = rowItem(
         escapeHtml(r.zone_name),
-        `${escapeHtml(r.program_name)} &middot; ${leftMin}m left of ${fmtDuration(r.duration_minutes)}`,
-        `<span class="pill pill-on">On</span>`
+        r.paused
+          ? `${escapeHtml(r.program_name)} &middot; paused with ${leftMin}m still to run`
+          : `${escapeHtml(r.program_name)} &middot; ${leftMin}m left of ${fmtDuration(r.duration_minutes)}`,
+        r.paused
+          ? `<span class="pill pill-warn">Paused</span>`
+          : `<span class="pill pill-on">On</span>`
       );
       row.querySelector(".meta").insertAdjacentHTML(
         "beforeend",
-        `<div class="progress"><i style="width:${pct.toFixed(1)}%"></i></div>`
+        `<div class="progress${r.paused ? " is-paused" : ""}"><i style="width:${pct.toFixed(1)}%"></i></div>`
       );
       runsEl.appendChild(row);
     }
@@ -419,6 +470,13 @@ on("apply-custom-delay", "click", () =>
     el("custom-delay-hours").value = "";
     await loadDashboard();
   }, "Rain delay set.")
+);
+
+on("pause-btn", "click", () =>
+  guard(async () => {
+    await apiPost("api/pause", {});
+    await loadDashboard();
+  }, "Watering paused - valves shut.")
 );
 
 on("clear-delay-btn", "click", () =>

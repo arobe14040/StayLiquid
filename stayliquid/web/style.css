@@ -458,6 +458,10 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 
 .progress { height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 7px; }
 .progress > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 1s linear; }
+.progress.is-paused > i { background: var(--warn); }
+
+.hero-actions { display: flex; align-items: center; gap: 8px; }
+.attention .btn-primary { margin-top: 2px; }
 
 /* -------------------------------------------------------------- badges */
 

@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS rain_delay (
     until TEXT
 );
 
+-- A short, deliberate hold on all watering - "I need the pressure indoors".
+-- Stored rather than kept in memory so a restart can't quietly start watering
+-- again, and carries its own expiry so it can't be left on forever.
+CREATE TABLE IF NOT EXISTS watering_pause (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    until TEXT
+);
+
 CREATE TABLE IF NOT EXISTS run_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     program_id INTEGER,
@@ -85,9 +93,8 @@ def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
     _migrate_to_start_times(conn)
-    conn.execute(
-        "INSERT OR IGNORE INTO rain_delay (id, until) VALUES (1, NULL)"
-    )
+    conn.execute("INSERT OR IGNORE INTO rain_delay (id, until) VALUES (1, NULL)")
+    conn.execute("INSERT OR IGNORE INTO watering_pause (id, until) VALUES (1, NULL)")
     conn.commit()
 
 
@@ -310,6 +317,20 @@ def set_rain_delay(until_iso: str | None) -> dict:
     with tx() as conn:
         conn.execute("UPDATE rain_delay SET until = ? WHERE id = 1", (until_iso,))
     return get_rain_delay()
+
+
+# ---- watering pause ---------------------------------------------------------
+
+def get_pause() -> str | None:
+    conn = get_conn()
+    row = conn.execute("SELECT until FROM watering_pause WHERE id = 1").fetchone()
+    return row["until"] if row else None
+
+
+def set_pause(until_iso: str | None) -> str | None:
+    with tx() as conn:
+        conn.execute("UPDATE watering_pause SET until = ? WHERE id = 1", (until_iso,))
+    return get_pause()
 
 
 # ---- run log ------------------------------------------------------------

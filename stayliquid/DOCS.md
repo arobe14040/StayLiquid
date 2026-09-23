@@ -96,6 +96,35 @@ Set per-program in the **Zone run mode** field:
 - **All zones together** - every zone in the program turns on immediately;
   each turns off independently once its own duration elapses.
 
+## Pause
+
+**Pause watering** on the Dashboard is for when you need the pressure indoors -
+a shower, filling something, washing the car. It shuts every open valve at once
+and holds the schedule.
+
+It is deliberately system-wide. Pausing a single zone would just hand the
+pressure to the next zone in the program, which is the opposite of what you
+wanted.
+
+- **Runs already going keep the time they still owe.** A zone 6 minutes into a
+  20-minute run resumes with 14 minutes left, not 20 and not nothing.
+- **Programs due during a pause are skipped**, logged `skipped_paused`, rather
+  than queued to run hours later on top of the next cycle. A pause is meant to
+  be short.
+- **Manual runs are refused while paused** instead of silently sitting and
+  waiting for a resume that might not come.
+- **It expires on its own** (two hours by default, and the Dashboard shows when).
+  A pause left on by accident would otherwise stop the lawn being watered
+  indefinitely. When it expires, held runs are ended and logged
+  `paused_expired` rather than valves reopening after a long unattended gap;
+  the schedule then carries on normally.
+- **It survives a restart**, so restarting the add-on can't quietly start
+  watering again while you're still using the water.
+
+Pause and rain delay are different tools: rain delay skips *scheduled* runs for
+a day or three and still allows manual ones; pause stops *everything*,
+including what is running right now, for a few minutes.
+
 ## Rain delay
 
 The preset buttons (12h/24h/48h/72h) and the custom-hours field all do the

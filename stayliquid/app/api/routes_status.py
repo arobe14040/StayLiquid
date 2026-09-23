@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import storage
 from ..presets import inches_for
+from .. import runner
 from ..runner import current_runs, rain_delay_active
 from ..scheduler import next_events, scheduler
 
@@ -20,12 +21,20 @@ class RainDelayIn(BaseModel):
     hours: float
 
 
+class PauseIn(BaseModel):
+    # A pause exists so the house can have the pressure back, so it's measured
+    # in minutes and expires by itself - one left on by accident would
+    # otherwise stop the lawn being watered indefinitely.
+    minutes: float = 120
+
+
 @router.get("/status")
 async def status():
     delay = await run_in_threadpool(storage.get_rain_delay)
     active = await rain_delay_active()
     return {
         "version": os.environ.get("APP_VERSION", "dev"),
+        "pause": await runner.pause_state(),
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},
         "current_runs": current_runs,
         "next_events": next_events(),
@@ -41,6 +50,22 @@ async def set_rain_delay(body: RainDelayIn):
 @router.delete("/raindelay")
 async def clear_rain_delay():
     return await run_in_threadpool(storage.set_rain_delay, None)
+
+
+@router.post("/pause")
+async def pause_watering(body: PauseIn):
+    """Close every open valve and hold the schedule, keeping each run's
+    remaining time so it can carry on from where it stopped."""
+    minutes = max(1.0, min(body.minutes, 12 * 60))
+    until = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+    await runner.pause_until(until)
+    return await runner.pause_state()
+
+
+@router.delete("/pause")
+async def resume_watering():
+    await runner.pause_until(None)
+    return await runner.pause_state()
 
 
 @router.get("/history/stats")

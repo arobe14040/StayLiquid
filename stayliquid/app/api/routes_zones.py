@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import ha_client, state_watch, storage
+from .. import ha_client, runner, state_watch, storage
 from ..runner import run_zone_manual, stop_zone
 
 router = APIRouter()
@@ -91,6 +91,9 @@ async def delete_zone(zone_id: int):
 @router.post("/zones/{zone_id}/run")
 async def run_zone_now(zone_id: int, body: ManualRun):
     zone = await _get_zone(zone_id)
+    # Better to say so than to start a run that immediately sits and waits.
+    if (await runner.pause_state())["active"]:
+        raise HTTPException(409, "Watering is paused. Resume it first.")
     asyncio.create_task(
         run_zone_manual(zone_id, zone["entity_id"], zone["name"], body.minutes)
     )

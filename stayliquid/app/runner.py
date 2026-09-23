@@ -36,10 +36,27 @@ _zone_locks: dict[str, asyncio.Lock] = {}
 # ended on its own or someone stopped it.
 _stop_events: dict[str, asyncio.Event] = {}
 
+# A pair of complementary flags, because an Event can only be awaited for being
+# set: a running zone waits on _paused to notice a pause starting, and a paused
+# one waits on _resumed to notice it ending. refresh_pause_gate keeps them
+# opposite; nothing else touches them.
+_paused = asyncio.Event()
+_resumed = asyncio.Event()
+_resumed.set()
+
+# While paused, how often to re-read the stored expiry. A pause is minutes long
+# and ends by someone pressing resume, so this only has to catch the deadline.
+PAUSE_POLL_SECONDS = 15
+
 # what the dashboard shows as "currently running" - list of dicts, cleared
 # as each zone finishes. Kept in memory only; a restart clears it, which is
 # fine since the scheduler also re-evaluates from the database on restart.
 current_runs: list[dict] = []
+
+
+def fmt_duration(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m {secs}s" if minutes else f"{secs}s"
 
 
 def _lock_for(entity_id: str) -> asyncio.Lock:
@@ -118,9 +135,12 @@ async def _first_set(*events: asyncio.Event, timeout: float) -> asyncio.Event | 
 
 
 async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Event,
-                        seconds: float) -> str:
-    """Hold for the run's duration, ending early if the run is stopped here or
-    the valve is switched off somewhere else. Returns the status to log.
+                        seconds: float) -> tuple[str, float]:
+    """Water for up to `seconds`, ending early if the run is stopped here, the
+    valve is switched off somewhere else, or watering is paused.
+
+    Returns the outcome and how much of the time is still owed, so a pause can
+    pick the run back up where it left off.
 
     Home Assistant pushes state changes, so a switch-off elsewhere normally
     arrives as an event within a moment. The periodic check is what covers the
@@ -129,6 +149,7 @@ async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Even
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline = started + seconds
+    left = lambda: max(0.0, deadline - loop.time())  # noqa: E731
 
     switched_off = asyncio.Event()
 
@@ -142,21 +163,23 @@ async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Even
     state_watch.watcher.add_listener(on_state_change)
     try:
         while True:
-            remaining = deadline - loop.time()
+            remaining = left()
             if remaining <= 0:
-                return "completed"
+                return "completed", 0.0
 
             live = state_watch.watcher.is_live()
             gap = LIVE_SANITY_CHECK_SECONDS if live else STATE_CHECK_SECONDS
             triggered = await _first_set(
-                stop_event, switched_off, timeout=min(gap, remaining)
+                stop_event, switched_off, _paused, timeout=min(gap, remaining)
             )
 
             if triggered is stop_event:
-                return "stopped"
+                return "stopped", left()
+            if triggered is _paused:
+                return "paused", left()
             if triggered is switched_off:
                 log.info("%s was switched off outside StayLiquid - ending the run.", zone_name)
-                return "stopped_external"
+                return "stopped_external", left()
 
             if loop.time() - started < STATE_CHECK_GRACE_SECONDS:
                 continue
@@ -165,9 +188,85 @@ async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Even
                     "%s is off in Home Assistant but no event said so - ending the run.",
                     zone_name,
                 )
-                return "stopped_external"
+                return "stopped_external", left()
     finally:
+        # Removed before the caller closes the valve, so our own turn-off can't
+        # come back as "somebody switched it off".
         state_watch.watcher.remove_listener(on_state_change)
+
+
+async def pause_until(until_iso: str | None) -> None:
+    """Hold or release all watering. Passing None releases it.
+
+    Every in-flight zone closes its valve and keeps what's left of its time; the
+    scheduler won't start anything new either, which is the point - handing the
+    pressure to the next zone in a program would defeat the purpose.
+    """
+    await run_in_threadpool(storage.set_pause, until_iso)
+    await refresh_pause_gate()
+
+
+async def refresh_pause_gate() -> None:
+    """Line the in-memory gate up with what's stored. Also called at startup, so
+    a pause survives a restart instead of quietly watering again."""
+    until = await run_in_threadpool(storage.get_pause)
+    if _pause_remaining(until) > 0:
+        if not _paused.is_set():
+            log.info("Watering paused until %s.", until)
+        _resumed.clear()
+        _paused.set()
+    else:
+        if _paused.is_set():
+            log.info("Watering resumed.")
+        _paused.clear()
+        _resumed.set()
+
+
+def _pause_remaining(until_iso: str | None) -> float:
+    """Seconds left on the pause, or 0 if it isn't active."""
+    if not until_iso:
+        return 0.0
+    try:
+        until = datetime.fromisoformat(until_iso)
+    except ValueError:
+        return 0.0
+    return max(0.0, (until - datetime.now(timezone.utc)).total_seconds())
+
+
+async def pause_state() -> dict:
+    until = await run_in_threadpool(storage.get_pause)
+    remaining = _pause_remaining(until)
+    return {"active": remaining > 0, "until": until if remaining > 0 else None}
+
+
+async def _hold_while_paused(stop_event: asyncio.Event) -> str:
+    """Wait out a pause. Returns 'ready' to carry on, 'stopped' if the run was
+    stopped meanwhile, or 'expired' if the pause ran its full length."""
+    while _paused.is_set():
+        until = await run_in_threadpool(storage.get_pause)
+
+        # No stored deadline means somebody pressed resume - carry on. This has
+        # to be told apart from a deadline that has passed, because both leave
+        # nothing to wait for but they mean opposite things.
+        if until is None:
+            await refresh_pause_gate()
+            return "ready"
+
+        remaining = _pause_remaining(until)
+        if remaining <= 0:
+            # Ran its full length. Ending the run is the cautious reading of
+            # that: reopening a valve after a long unattended gap is a worse
+            # surprise than a cycle that finishes short.
+            await refresh_pause_gate()
+            return "expired"
+
+        triggered = await _first_set(
+            _resumed, stop_event, timeout=min(remaining, PAUSE_POLL_SECONDS)
+        )
+        if triggered is stop_event:
+            return "stopped"
+
+    return "ready"
 
 
 def stop_zone(entity_id: str) -> bool:
@@ -254,6 +353,16 @@ async def run_program(program_id: int, trigger_source: str = "scheduled") -> Non
         )
         return
 
+    # A pause is meant to be short, so a program due in the middle of one is
+    # skipped rather than queued - starting it hours late, possibly on top of
+    # the next cycle, is the more surprising outcome. Runs already under way
+    # hold their place instead; that's the point of pausing.
+    if trigger_source == "scheduled" and _paused.is_set():
+        await run_in_threadpool(
+            storage.log_skip, program_id, program["name"], "skipped_paused"
+        )
+        return
+
     zones = [z for z in program["zones"] if z["duration_minutes"] > 0]
     if not zones:
         return
@@ -334,9 +443,36 @@ async def _water(
         _stop_events[entity_id] = stop_event
         current_runs.append(entry)
         status = "completed"
+        owed = minutes * 60
         try:
-            await ha_client.turn_on(entity_id)
-            status = await _wait_out_run(entity_id, zone_name, stop_event, minutes * 60)
+            # A run is one or more watering segments. A pause closes the valve
+            # and keeps what's left of the time, so watering carries on from
+            # where it stopped rather than starting over or being cut short.
+            while owed > 0:
+                held = await _hold_while_paused(stop_event)
+                if held == "stopped":
+                    status = "stopped"
+                    break
+                if held == "expired":
+                    status = "paused_expired"
+                    log.info("%s stayed paused too long - ending the run.", zone_name)
+                    break
+
+                entry["paused"] = False
+                entry["resumed_at"] = datetime.now(timezone.utc).isoformat()
+                entry["seconds_left"] = owed
+
+                await ha_client.turn_on(entity_id)
+                status, owed = await _wait_out_run(entity_id, zone_name, stop_event, owed)
+                if status != "paused":
+                    break
+
+                entry["paused"] = True
+                entry["seconds_left"] = owed
+                if not await _close_valve(entity_id, zone_name):
+                    status = "error"
+                    break
+                log.info("%s paused with %s left.", zone_name, fmt_duration(owed))
         except Exception:
             status = "error"
             log.exception("Error running zone %s (%s)", zone_name, entity_id)

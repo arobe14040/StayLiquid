@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
     await state_watch.sync_watched_zones()
     state_watch.watcher.start()
 
+    # A pause outlives a restart, so the gate has to be rebuilt from the
+    # database before anything can start watering.
+    await runner.refresh_pause_gate()
+
     timezone_name = await apply_timezone()
     scheduler.start()
     sync_all()
