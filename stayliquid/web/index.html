@@ -161,12 +161,29 @@
         </button>
       </section>
 
-      <!-- Step: schedule -->
+      <!-- Step: the numbers a preset fills in, all editable before they're used -->
       <section class="step" data-step="schedule" hidden>
+        <div class="preset-banner" id="preset-banner" hidden></div>
+
         <label class="field">
           <span>Program name</span>
           <input type="text" id="pf-name" placeholder="e.g. Back lawn - new seed" />
         </label>
+
+        <div class="section">
+          <div class="section-head">
+            <h3>How long each zone runs</h3>
+          </div>
+          <p class="hint">
+            Sets the runtime for every zone in this program. You can still give an
+            individual zone its own time on the next step.
+          </p>
+          <div class="inline-field">
+            <input type="number" id="pf-default-minutes" min="0.5" step="0.5" />
+            <span class="inline-label">minutes per zone, per cycle</span>
+          </div>
+          <div class="water-readout" id="water-readout"></div>
+        </div>
 
         <div class="section">
           <div class="section-head"><h3>Which days</h3></div>

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+Step 2 of the builder is now a review of the defaults a stage fills in.
+
+- **Picking a stage lands you on its numbers, ready to change.** The step is
+  called Defaults, and it opens with a banner naming the stage it came from.
+  Whatever you set here is what the later steps use.
+- **How long each zone runs is set here**, instead of only being adjustable
+  per-zone two steps later. It applies to every zone in the program, including
+  ones added afterwards; a single zone can still be given its own runtime on
+  the Zones step.
+- **A live water readout** under the runtime - "each zone gets about 0.07" per
+  cycle, so 0.21" across 3 cycles on a watering day" - so the minutes number
+  means something while you're choosing it.
+- On a phone the step strip now shows the numbers plus the step you're on,
+  rather than four truncated labels.
+
 ## 0.3.2
 
 Stops a stale page from taking the whole UI down with it.

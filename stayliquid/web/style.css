@@ -588,6 +588,26 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 
 .review-enabled { margin-top: 16px; }
 
+.preset-banner {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  margin-bottom: 16px;
+}
+.preset-banner strong { display: block; font-size: 14px; color: var(--accent); }
+.preset-banner span { font-size: 12px; color: var(--muted); }
+
+.water-readout {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+}
+.water-readout strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
 /* ---------------------------------------------------------------- chart */
 
 .chart { margin: 4px 0 0; }
@@ -753,4 +773,10 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   .cycle-row .cycle-tag { min-width: 0; }
   .cycle-row .remove-cycle { order: 2; margin-left: auto; }
   .cycle-row .cycle-note { order: 3; margin-left: 0; width: 100%; }
+
+  /* Four labels don't fit a phone, and truncating them all reads worse than
+     showing dots plus the step you're actually on. */
+  .stepper li:not(.current) { flex: 0 0 auto; }
+  .stepper li:not(.current) .step-name { display: none; }
+  .stepper li.current { flex: 1; }
 }

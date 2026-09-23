@@ -39,9 +39,11 @@ const builder = {
   editingId: null,
   autoName: "",        // the last name we filled in ourselves, so we can replace it
   stage: "custom",
+  presetName: "",
   scheduleType: "weekdays",
   weekdays: new Set(),
   intervalDays: 3,
+  defaultMinutes: 10,  // drives every zone's runtime; overridable per zone later
   cycles: [],
   zones: [],
   runMode: "sequential",
@@ -442,6 +444,7 @@ function renderPresetGallery() {
 
 function applyPreset(preset) {
   builder.stage = preset.id;
+  builder.presetName = `Stage ${preset.stage} - ${preset.name}`;
   builder.scheduleType = preset.schedule_type;
   builder.weekdays = new Set(
     preset.schedule_type === "weekdays" ? (preset.weekdays || "").split(",").filter(Boolean) : DAYS
@@ -449,25 +452,32 @@ function applyPreset(preset) {
   builder.intervalDays = preset.interval_days || 3;
   builder.cycles = [...preset.cycle_times];
   builder.runMode = preset.run_mode;
+  setDefaultMinutes(preset.duration_minutes);
 
   if (!builder.zones.length) {
     builder.zones = zonesCache
       .filter((z) => z.enabled)
       .map((z) => ({ zone_id: z.id, zone_name: z.name, duration_minutes: preset.duration_minutes }));
-  } else {
-    builder.zones.forEach((z) => (z.duration_minutes = preset.duration_minutes));
   }
 
   // Replace a name we generated from another preset, but never one the user typed.
   const current = el("pf-name").value.trim();
   if (!current || current === builder.autoName) {
-    builder.autoName = `Stage ${preset.stage} - ${preset.name}`;
+    builder.autoName = builder.presetName;
     el("pf-name").value = builder.autoName;
   }
-  el("pf-add-zone-duration").value = preset.duration_minutes;
 
   renderBuilder();
   goToStep(modalSteps.indexOf("schedule"));
+}
+
+// The runtime set here is the program's default, so it applies to every zone -
+// including ones added later. A zone can still be given its own time on the
+// Zones step; changing this again overwrites those.
+function setDefaultMinutes(minutes) {
+  builder.defaultMinutes = minutes;
+  builder.zones.forEach((z) => (z.duration_minutes = minutes));
+  el("pf-add-zone-duration").value = minutes;
 }
 
 // -- builder: schedule type / days / run mode
@@ -507,6 +517,18 @@ on("pf-everyday-btn", "click", () => {
 
 on("pf-interval-days", "input", (e) => {
   builder.intervalDays = Number(e.target.value) || 1;
+});
+
+on("pf-default-minutes", "input", (e) => {
+  const minutes = Number(e.target.value);
+  if (!minutes || minutes <= 0) return;
+  setDefaultMinutes(minutes);
+  // Everything downstream reads the zone durations this just rewrote, so the
+  // later steps have to be re-rendered or they keep showing the old number.
+  renderWaterReadout();
+  renderCycles();
+  renderBuilderZones();
+  renderTimeline();
 });
 
 // -- builder: cycles
@@ -765,9 +787,39 @@ function renderTimeline() {
   `;
 }
 
+function renderWaterReadout() {
+  const perCycle = inchesFor(builder.defaultMinutes);
+  const cycles = builder.cycles.length;
+  el("water-readout").innerHTML = cycles
+    ? `Each zone gets about <strong>${fmtInches(perCycle)}</strong> per cycle, so
+       <strong>${fmtInches(perCycle * cycles)}</strong> across ${cycles}
+       cycle${cycles === 1 ? "" : "s"} on a watering day.`
+    : `Each zone gets about <strong>${fmtInches(perCycle)}</strong> per cycle.`;
+}
+
+function renderPresetBanner() {
+  const banner = el("preset-banner");
+  if (builder.stage === "custom" || !builder.presetName) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML = `
+    <strong>${escapeHtml(builder.presetName)}</strong>
+    <span>These are the stage's defaults - change anything here and the rest of
+    the program follows.</span>
+  `;
+}
+
 function renderBuilder() {
   setSegmented(el("pf-schedule-type"), builder.scheduleType);
   setSegmented(el("pf-run-mode"), builder.runMode);
+  // Don't fight the user mid-keystroke: "2.5" would round-trip to "2" while
+  // they're still typing the decimal.
+  const minutesInput = el("pf-default-minutes");
+  if (minutesInput !== document.activeElement) minutesInput.value = builder.defaultMinutes;
+  renderPresetBanner();
+  renderWaterReadout();
 
   el("pf-weekdays-row").hidden = builder.scheduleType !== "weekdays";
   el("pf-interval-row").hidden = builder.scheduleType !== "interval";
@@ -793,14 +845,16 @@ function resetBuilder() {
   builder.editingId = null;
   builder.autoName = "";
   builder.stage = "custom";
+  builder.presetName = "";
   builder.scheduleType = "weekdays";
   builder.weekdays = new Set();
   builder.intervalDays = 3;
+  builder.defaultMinutes = 10;
   builder.cycles = [];
   builder.zones = [];
   builder.runMode = "sequential";
   el("pf-name").value = "";
-  el("pf-add-zone-duration").value = "";
+  el("pf-add-zone-duration").value = 10;
   el("pf-enabled").checked = true;
   renderBuilder();
 }
@@ -809,8 +863,8 @@ function resetBuilder() {
 
 const STEP_INFO = {
   start: { name: "Start", note: "Pick the stage your lawn is at, or start from blank." },
-  schedule: { name: "Schedule", note: "Name it, then choose the days and cycle times." },
-  zones: { name: "Zones", note: "Pick the zones and how long each one runs." },
+  schedule: { name: "Defaults", note: "Change any of these - the rest of the program follows." },
+  zones: { name: "Zones", note: "Pick the zones, in the order they should run." },
   review: { name: "Review", note: "Check the timings, then save." },
 };
 
@@ -896,7 +950,12 @@ function stepProblem(step) {
 on("new-program-btn", "click", () => openModal(null));
 on("modal-close", "click", () => closeModal(false));
 on("modal-back", "click", () => goToStep(stepIndex - 1));
-on("pf-custom-start", "click", () => goToStep(modalSteps.indexOf("schedule")));
+on("pf-custom-start", "click", () => {
+  builder.stage = "custom";
+  builder.presetName = "";
+  renderBuilder();
+  goToStep(modalSteps.indexOf("schedule"));
+});
 
 on("modal-next", "click", () => {
   const problem = stepProblem(modalSteps[stepIndex]);
@@ -952,6 +1011,7 @@ on("modal-save", "click", () =>
 function fillBuilderFrom(p) {
   builder.editingId = p.id;
   builder.autoName = "";
+  builder.presetName = "";
   builder.stage = p.stage || "custom";
   builder.scheduleType = p.schedule_type;
   builder.weekdays = new Set((p.weekdays || "").split(",").filter(Boolean));
@@ -963,6 +1023,10 @@ function fillBuilderFrom(p) {
     zone_name: z.zone_name,
     duration_minutes: z.duration_minutes,
   }));
+  // Seed the default from the saved zones without writing it back over them -
+  // an existing program may deliberately give one zone its own runtime.
+  builder.defaultMinutes = builder.zones.length ? builder.zones[0].duration_minutes : 10;
+  el("pf-add-zone-duration").value = builder.defaultMinutes;
   el("pf-name").value = p.name;
   el("pf-enabled").checked = !!p.enabled;
   renderBuilder();
