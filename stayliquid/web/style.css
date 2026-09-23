@@ -186,6 +186,8 @@ body {
 .btn-danger-solid { background: var(--danger); color: var(--on-danger); border-color: transparent; }
 .btn-danger-solid:hover { filter: brightness(1.06); }
 .btn-small { padding: 6px 11px; font-size: 13px; border-radius: 8px; }
+.btn-running { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.btn-running:hover { filter: brightness(1.06); }
 .btn-icon {
   padding: 5px 9px;
   font-size: 14px;

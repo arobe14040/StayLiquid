@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.0
+
+A zone's test run is now a toggle you can turn off.
+
+- **Test run became a start/stop toggle.** It starts a run for the minutes in
+  the box beside it, then turns green and counts down - "Stop &middot; 7m left".
+  Pressing it again closes the valve immediately rather than waiting out the
+  timer, which previously there was no way to do short of restarting the
+  add-on.
+- The toggle flips back on its own when a run finishes, and the minutes box is
+  locked while a run is going so the number can't drift from what's running.
+- A run ended this way is logged **Stopped early**, so the history tells it
+  apart from one that ran its full time.
+- New `POST /api/zones/{id}/stop`. It works on any run of that zone, not just a
+  test run, so a program's zone can be cut short from here too.
+
+**The Zones tab now watches Home Assistant**, instead of only knowing what the
+state was when the page was drawn.
+
+- A zone switched on or off elsewhere - in Home Assistant, from a dashboard, or
+  by hand at the valve - shows up here within a few seconds. Previously the
+  page stayed as it was until you reloaded it.
+- **A run whose valve is switched off elsewhere now ends** rather than counting
+  down against a closed valve, and is logged "Switched off in Home Assistant"
+  so it reads differently from one you stopped here. StayLiquid never reopens a
+  valve somebody closed.
+- Only a definite "off" from Home Assistant ends a run. An unreachable API or
+  an `unavailable` entity is not treated as evidence, so a blip doesn't cut
+  watering short, and the check leaves a zone alone for the first 20 seconds so
+  a state that hasn't caught up yet isn't mistaken for a switch-off.
+- New `GET /api/zones/states`, polled only while the Zones tab is open - one
+  call to Home Assistant, filtered to the zones actually in use.
+
 ## 0.4.2
 
 - **Zones can be renamed.** A pencil button on each zone opens a rename dialog

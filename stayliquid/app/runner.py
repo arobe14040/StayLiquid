@@ -18,8 +18,19 @@ log = logging.getLogger("stayliquid.runner")
 TURN_OFF_ATTEMPTS = 4
 TURN_OFF_RETRY_SECONDS = 5
 
+# How often a running zone is checked against Home Assistant, and how long to
+# leave it alone first so a not-yet-updated state doesn't read as "switched
+# off" the instant we turned it on.
+STATE_CHECK_SECONDS = 10
+STATE_CHECK_GRACE_SECONDS = 20
+
 # entity_id -> asyncio.Lock, so two programs can never fight over one zone
 _zone_locks: dict[str, asyncio.Lock] = {}
+
+# entity_id -> Event that cuts a run short. Waiting on an event instead of
+# cancelling the task keeps the close-the-valve path identical whether the run
+# ended on its own or someone stopped it.
+_stop_events: dict[str, asyncio.Event] = {}
 
 # what the dashboard shows as "currently running" - list of dicts, cleared
 # as each zone finishes. Kept in memory only; a restart clears it, which is
@@ -69,6 +80,54 @@ async def _entity_unavailable(entity_id: str) -> bool:
     if state is None:
         return True
     return state.get("state") in ("unavailable", "unknown")
+
+
+async def _reported_off(entity_id: str) -> bool:
+    """True only when Home Assistant positively says the switch is off. An
+    unreachable API or an 'unavailable' entity is not evidence either way, so
+    those keep the run going rather than cutting the water short on a blip."""
+    try:
+        state = await ha_client.get_state(entity_id)
+    except Exception:
+        return False
+    return bool(state) and state.get("state") == "off"
+
+
+async def _wait_out_run(entity_id: str, zone_name: str, stop_event: asyncio.Event,
+                        seconds: float) -> str:
+    """Hold for the run's duration, watching for either a stop request or the
+    valve being switched off somewhere else. Returns the status to log."""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline = started + seconds
+
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return "completed"
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=min(STATE_CHECK_SECONDS, remaining))
+            return "stopped"
+        except asyncio.TimeoutError:
+            pass
+
+        if loop.time() - started < STATE_CHECK_GRACE_SECONDS:
+            continue
+        if await _reported_off(entity_id):
+            log.info("%s was switched off outside StayLiquid - ending the run.", zone_name)
+            return "stopped_external"
+
+
+def stop_zone(entity_id: str) -> bool:
+    """End whatever is watering this zone now. The run's own cleanup closes the
+    valve and logs it, so this just releases the wait. False if nothing was
+    running on that entity."""
+    event = _stop_events.get(entity_id)
+    if not event:
+        return False
+    event.set()
+    return True
 
 
 async def stop_all(reason: str) -> int:
@@ -220,15 +279,18 @@ async def _water(
             "started_at": datetime.now(timezone.utc).isoformat(),
             "duration_minutes": minutes,
         }
+        stop_event = asyncio.Event()
+        _stop_events[entity_id] = stop_event
         current_runs.append(entry)
         status = "completed"
         try:
             await ha_client.turn_on(entity_id)
-            await asyncio.sleep(minutes * 60)
+            status = await _wait_out_run(entity_id, zone_name, stop_event, minutes * 60)
         except Exception:
             status = "error"
             log.exception("Error running zone %s (%s)", zone_name, entity_id)
         finally:
+            _stop_events.pop(entity_id, None)
             if entry in current_runs:
                 current_runs.remove(entry)
                 if not await _close_valve(entity_id, zone_name):

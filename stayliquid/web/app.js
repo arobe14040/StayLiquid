@@ -20,6 +20,8 @@ const STATUS_PILL = {
   running: "pill-on",
   error: "pill-danger",
   interrupted: "pill-warn",
+  stopped: "pill-quiet",
+  stopped_external: "pill-quiet",
   skipped_rain_delay: "pill-warn",
   skipped_unavailable: "pill-warn",
 };
@@ -28,6 +30,8 @@ const STATUS_LABEL = {
   running: "Running",
   error: "Error",
   interrupted: "Interrupted - add-on restarted",
+  stopped: "Stopped early",
+  stopped_external: "Switched off in Home Assistant",
   skipped_rain_delay: "Skipped - rain delay",
   skipped_unavailable: "Skipped - zone unavailable",
 };
@@ -340,6 +344,9 @@ async function loadDashboard() {
 
   if (status.version) el("app-version").textContent = `v${status.version}`;
 
+  // Keeps the Zones tab's run toggles honest even while another tab is showing.
+  paintZoneRunState(status.current_runs);
+
   const pill = el("raindelay-pill");
   if (status.rain_delay.active) {
     pill.hidden = false;
@@ -423,12 +430,77 @@ on("clear-delay-btn", "click", () =>
 
 // ---- zones tab --------------------------------------------------------------
 
+// zone_id -> the row's run toggle and minutes box, so the poll can flip a
+// toggle back when a run finishes without rebuilding the list underneath the
+// user's cursor.
+const zoneRows = new Map();
+let lastCurrentRuns = [];
+
+/**
+ * Re-read the valves' actual on/off from Home Assistant. Without this the page
+ * only knows what the state was when it was drawn, so a zone switched off in
+ * HA (or by hand at the box) would keep showing as on here.
+ */
+async function refreshZoneStates() {
+  if (!zoneRows.size || !el("tab-zones")?.classList.contains("active")) return;
+  let states;
+  try {
+    states = await apiGet("api/zones/states");
+  } catch {
+    return; // HA unreachable - keep showing the last thing we knew
+  }
+  zoneRows.forEach((refs) => {
+    if (refs.entityId in states) refs.reportedOn = states[refs.entityId] === "on";
+  });
+  paintZoneRunState(lastCurrentRuns);
+}
+
+/** Point each zone's run toggle at whatever is actually watering right now. */
+function paintZoneRunState(currentRuns) {
+  lastCurrentRuns = currentRuns || [];
+  const running = new Map(lastCurrentRuns.map((r) => [r.zone_id, r]));
+
+  zoneRows.forEach((refs, zoneId) => {
+    if (!refs.button.isConnected) return zoneRows.delete(zoneId);
+    const run = running.get(zoneId);
+
+    // A run of ours just ended, which means we closed the valve - so whatever
+    // HA reported when the list was drawn is now out of date.
+    if (refs.wasRunning && !run) refs.reportedOn = false;
+    refs.wasRunning = Boolean(run);
+
+    // Open if we're running it, or if HA said so when the list was drawn -
+    // somebody may have switched it on outside the add-on.
+    refs.pill.hidden = !run && !refs.reportedOn;
+
+    if (run) {
+      const endsAt = new Date(run.started_at).getTime() + run.duration_minutes * 60000;
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 60000));
+      refs.button.dataset.running = "true";
+      refs.button.textContent = `Stop · ${left}m left`;
+      refs.button.classList.add("btn-running");
+      refs.button.setAttribute("aria-pressed", "true");
+      refs.button.setAttribute("aria-label", `Stop ${refs.name}`);
+      refs.minutes.disabled = true;
+    } else {
+      refs.button.dataset.running = "false";
+      refs.button.textContent = "Test run";
+      refs.button.classList.remove("btn-running");
+      refs.button.setAttribute("aria-pressed", "false");
+      refs.button.setAttribute("aria-label", `Test run ${refs.name}`);
+      refs.minutes.disabled = false;
+    }
+  });
+}
+
 async function loadZonesTab() {
-  const [zones, entities] = await Promise.all([
+  const [zones, entities, status] = await Promise.all([
     apiGet("api/zones"),
     apiGet("api/ha/entities"),
+    apiGet("api/status"),
   ]);
   zonesCache = zones;
+  zoneRows.clear();
 
   const stateByEntity = Object.fromEntries(entities.map((e) => [e.entity_id, e.state]));
   const usedIds = new Set(zones.map((z) => z.entity_id));
@@ -448,13 +520,11 @@ async function loadZonesTab() {
 
   list.innerHTML = "";
   zones.forEach((z) => {
-    const state = stateByEntity[z.entity_id];
-    const statePill = state === "on" ? `<span class="pill pill-on">On</span>` : "";
     const row = rowItem(
       `${escapeHtml(z.name)} ${z.enabled ? "" : `<span class="pill pill-quiet">Disabled</span>`}`,
       escapeHtml(z.entity_id),
       `
-        ${statePill}
+        <span class="pill pill-on zone-on-pill" ${stateByEntity[z.entity_id] === "on" ? "" : "hidden"}>On</span>
         <button class="btn btn-icon rename-zone" title="Rename zone" aria-label="Rename ${escapeHtml(z.name)}">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none"
                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -463,18 +533,36 @@ async function loadZonesTab() {
           </svg>
         </button>
         <input type="number" class="run-minutes" value="5" min="0.5" step="0.5" style="width:70px" />
-        <button class="btn btn-small run-zone">Test run</button>
+        <button class="btn btn-small run-zone" aria-pressed="false">Test run</button>
         <button class="btn btn-small toggle-zone">${z.enabled ? "Disable" : "Enable"}</button>
         <button class="btn btn-small btn-danger delete-zone">Delete</button>
       `
     );
-    row.querySelector(".run-zone").addEventListener("click", () =>
+    const runBtn = row.querySelector(".run-zone");
+    const minutesInput = row.querySelector(".run-minutes");
+    zoneRows.set(z.id, {
+      button: runBtn,
+      minutes: minutesInput,
+      pill: row.querySelector(".zone-on-pill"),
+      name: z.name,
+      entityId: z.entity_id,
+      reportedOn: stateByEntity[z.entity_id] === "on",
+    });
+
+    runBtn.addEventListener("click", () =>
       guard(async () => {
-        const minutes = Number(row.querySelector(".run-minutes").value) || 5;
-        await apiPost(`api/zones/${z.id}/run`, { minutes });
+        if (runBtn.dataset.running === "true") {
+          await apiPost(`api/zones/${z.id}/stop`, {});
+          toast(`${z.name} stopped.`);
+        } else {
+          const minutes = Number(minutesInput.value);
+          if (!minutes || minutes <= 0) throw new Error("Set how many minutes to run for.");
+          await apiPost(`api/zones/${z.id}/run`, { minutes });
+          toast(`${z.name} running for ${fmtDuration(minutes)}.`);
+        }
+        // Reflect the change straight away instead of waiting for the poll.
         await loadDashboard();
-        switchTab("dashboard");
-      }, `${z.name} running.`)
+      })
     );
     row.querySelector(".rename-zone").addEventListener("click", () =>
       guard(async () => {
@@ -511,6 +599,8 @@ async function loadZonesTab() {
     );
     list.appendChild(row);
   });
+
+  paintZoneRunState(status.current_runs);
 }
 
 on("add-zone-btn", "click", () =>
@@ -1423,4 +1513,7 @@ if (missingNodes) {
 
 renderBuilder();
 guard(loadDashboard);
-setInterval(() => loadDashboard(), 5000);
+setInterval(() => {
+  loadDashboard();
+  refreshZoneStates();
+}, 5000);

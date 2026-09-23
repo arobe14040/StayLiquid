@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from .. import ha_client, storage
-from ..runner import run_zone_manual
+from ..runner import run_zone_manual, stop_zone
 
 router = APIRouter()
 
@@ -35,6 +35,22 @@ async def list_zones():
     return await run_in_threadpool(storage.list_zones)
 
 
+@router.get("/zones/states")
+async def zone_states():
+    """Live on/off for the configured zones, so the UI shows the valve's actual
+    state rather than whatever it was when the page was drawn. Cheap enough to
+    poll: one call to Home Assistant, filtered down to the zones in use."""
+    zones = await run_in_threadpool(storage.list_zones)
+    wanted = {z["entity_id"] for z in zones}
+    if not wanted:
+        return {}
+    try:
+        entities = await ha_client.get_zone_candidate_entities()
+    except Exception:
+        raise HTTPException(503, "Could not reach Home Assistant.")
+    return {e["entity_id"]: e["state"] for e in entities if e["entity_id"] in wanted}
+
+
 @router.post("/zones")
 async def create_zone(body: ZoneCreate):
     existing = await run_in_threadpool(storage.list_zones)
@@ -59,11 +75,23 @@ async def delete_zone(zone_id: int):
 
 @router.post("/zones/{zone_id}/run")
 async def run_zone_now(zone_id: int, body: ManualRun):
-    zones = await run_in_threadpool(storage.list_zones)
-    zone = next((z for z in zones if z["id"] == zone_id), None)
-    if not zone:
-        raise HTTPException(404, "Zone not found.")
+    zone = await _get_zone(zone_id)
     asyncio.create_task(
         run_zone_manual(zone_id, zone["entity_id"], zone["name"], body.minutes)
     )
     return {"ok": True}
+
+
+@router.post("/zones/{zone_id}/stop")
+async def stop_zone_now(zone_id: int):
+    """Cut a run short. The valve closes as part of that run's own cleanup."""
+    zone = await _get_zone(zone_id)
+    return {"ok": True, "stopped": stop_zone(zone["entity_id"])}
+
+
+async def _get_zone(zone_id: int) -> dict:
+    zones = await run_in_threadpool(storage.list_zones)
+    zone = next((z for z in zones if z["id"] == zone_id), None)
+    if not zone:
+        raise HTTPException(404, "Zone not found.")
+    return zone
