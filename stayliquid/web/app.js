@@ -15,6 +15,23 @@ const QUICK_CYCLES = {
   3: ["08:00", "11:30", "15:00"],
 };
 
+const STATUS_PILL = {
+  completed: "pill-quiet",
+  running: "pill-on",
+  error: "pill-danger",
+  interrupted: "pill-warn",
+  skipped_rain_delay: "pill-warn",
+  skipped_unavailable: "pill-warn",
+};
+const STATUS_LABEL = {
+  completed: "Completed",
+  running: "Running",
+  error: "Error",
+  interrupted: "Interrupted - add-on restarted",
+  skipped_rain_delay: "Skipped - rain delay",
+  skipped_unavailable: "Skipped - zone unavailable",
+};
+
 let zonesCache = [];
 let presetsCache = [];
 
@@ -62,6 +79,22 @@ function errorText(body) {
 
 function el(id) { return document.getElementById(id); }
 
+// Counts elements the script expected but didn't find. That happens when a
+// browser pairs a fresh app.js with an index.html it still has cached, and
+// wiring up a missing node used to throw and kill every later line in the file
+// - including constants, so unrelated tabs failed with confusing errors.
+let missingNodes = 0;
+
+function on(id, event, handler) {
+  const node = el(id);
+  if (!node) {
+    missingNodes += 1;
+    console.warn(`StayLiquid: #${id} is not on the page - is index.html stale?`);
+    return;
+  }
+  node.addEventListener(event, handler);
+}
+
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -69,10 +102,12 @@ function escapeHtml(s) {
 }
 
 function toast(message, kind = "ok") {
+  const host = el("toasts");
+  if (!host) return console.warn(`StayLiquid: ${message}`);
   const div = document.createElement("div");
   div.className = `toast ${kind === "error" ? "error" : ""}`;
   div.textContent = message;
-  el("toasts").appendChild(div);
+  host.appendChild(div);
   setTimeout(() => div.remove(), 3600);
 }
 
@@ -272,7 +307,7 @@ document.querySelectorAll("[data-delay]").forEach((btn) => {
   );
 });
 
-el("apply-custom-delay").addEventListener("click", () =>
+on("apply-custom-delay", "click", () =>
   guard(async () => {
     const hours = Number(el("custom-delay-hours").value);
     if (!hours || hours <= 0) throw new Error("Enter a number of hours.");
@@ -282,7 +317,7 @@ el("apply-custom-delay").addEventListener("click", () =>
   }, "Rain delay set.")
 );
 
-el("clear-delay-btn").addEventListener("click", () =>
+on("clear-delay-btn", "click", () =>
   guard(async () => {
     await apiDelete("api/raindelay");
     await loadDashboard();
@@ -354,7 +389,7 @@ async function loadZonesTab() {
   });
 }
 
-el("add-zone-btn").addEventListener("click", () =>
+on("add-zone-btn", "click", () =>
   guard(async () => {
     const entityId = el("new-zone-entity").value;
     const name = el("new-zone-name").value.trim();
@@ -442,21 +477,21 @@ function setSegmented(container, value) {
   container.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.value === value));
 }
 
-el("pf-schedule-type").querySelectorAll("button").forEach((btn) => {
+el("pf-schedule-type")?.querySelectorAll("button").forEach((btn) => {
   btn.addEventListener("click", () => {
     builder.scheduleType = btn.dataset.value;
     renderBuilder();
   });
 });
 
-el("pf-run-mode").querySelectorAll("button").forEach((btn) => {
+el("pf-run-mode")?.querySelectorAll("button").forEach((btn) => {
   btn.addEventListener("click", () => {
     builder.runMode = btn.dataset.value;
     renderBuilder();
   });
 });
 
-el("pf-weekdays-row").querySelectorAll(".day").forEach((btn) => {
+el("pf-weekdays-row")?.querySelectorAll(".day").forEach((btn) => {
   btn.addEventListener("click", () => {
     const day = btn.dataset.day;
     if (builder.weekdays.has(day)) builder.weekdays.delete(day);
@@ -465,12 +500,12 @@ el("pf-weekdays-row").querySelectorAll(".day").forEach((btn) => {
   });
 });
 
-el("pf-everyday-btn").addEventListener("click", () => {
+on("pf-everyday-btn", "click", () => {
   builder.weekdays = new Set(builder.weekdays.size === 7 ? [] : DAYS);
   renderBuilder();
 });
 
-el("pf-interval-days").addEventListener("input", (e) => {
+on("pf-interval-days", "input", (e) => {
   builder.intervalDays = Number(e.target.value) || 1;
 });
 
@@ -483,7 +518,7 @@ document.querySelectorAll("[data-quick-cycles]").forEach((btn) => {
   });
 });
 
-el("pf-add-cycle-btn").addEventListener("click", () => {
+on("pf-add-cycle-btn", "click", () => {
   const last = builder.cycles[builder.cycles.length - 1];
   const next = last ? minutesToValue(toMinutes(last) + 180) : "08:00";
   builder.cycles.push(builder.cycles.includes(next) ? minutesToValue(toMinutes(next) + 30) : next);
@@ -561,7 +596,7 @@ function refreshZoneAddSelect() {
   el("pf-add-zone-btn").disabled = !available.length;
 }
 
-el("pf-add-zone-btn").addEventListener("click", () => {
+on("pf-add-zone-btn", "click", () => {
   const zoneId = Number(el("pf-add-zone-select").value);
   const duration = Number(el("pf-add-zone-duration").value);
   if (!zoneId) return toast("No zone to add.", "error");
@@ -858,18 +893,18 @@ function stepProblem(step) {
   return null;
 }
 
-el("new-program-btn").addEventListener("click", () => openModal(null));
-el("modal-close").addEventListener("click", () => closeModal(false));
-el("modal-back").addEventListener("click", () => goToStep(stepIndex - 1));
-el("pf-custom-start").addEventListener("click", () => goToStep(modalSteps.indexOf("schedule")));
+on("new-program-btn", "click", () => openModal(null));
+on("modal-close", "click", () => closeModal(false));
+on("modal-back", "click", () => goToStep(stepIndex - 1));
+on("pf-custom-start", "click", () => goToStep(modalSteps.indexOf("schedule")));
 
-el("modal-next").addEventListener("click", () => {
+on("modal-next", "click", () => {
   const problem = stepProblem(modalSteps[stepIndex]);
   if (problem) return toast(problem, "error");
   goToStep(stepIndex + 1);
 });
 
-el("program-modal").addEventListener("click", (e) => {
+on("program-modal", "click", (e) => {
   if (e.target === el("program-modal")) closeModal(false);
 });
 
@@ -877,7 +912,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !el("program-modal").hidden) closeModal(false);
 });
 
-el("modal-save").addEventListener("click", () =>
+on("modal-save", "click", () =>
   guard(async () => {
     for (const step of modalSteps) {
       const problem = stepProblem(step);
@@ -983,23 +1018,6 @@ function renderProgramsList(programs) {
 }
 
 // ---- history tab ------------------------------------------------------------
-
-const STATUS_PILL = {
-  completed: "pill-quiet",
-  running: "pill-on",
-  error: "pill-danger",
-  interrupted: "pill-warn",
-  skipped_rain_delay: "pill-warn",
-  skipped_unavailable: "pill-warn",
-};
-const STATUS_LABEL = {
-  completed: "Completed",
-  running: "Running",
-  error: "Error",
-  interrupted: "Interrupted - add-on restarted",
-  skipped_rain_delay: "Skipped - rain delay",
-  skipped_unavailable: "Skipped - zone unavailable",
-};
 
 async function loadHistoryTab() {
   const [stats, rows] = await Promise.all([
@@ -1191,6 +1209,12 @@ function renderHistoryList(rows) {
 }
 
 // ---- init -------------------------------------------------------------------
+
+// A stale index.html paired with a fresh app.js leaves half the page unwired.
+// Say so plainly rather than letting the user hunt dead buttons.
+if (missingNodes) {
+  toast("This page is out of date. Reload the page to get the current version.", "error");
+}
 
 renderBuilder();
 guard(loadDashboard);

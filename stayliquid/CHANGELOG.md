@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.2
+
+Stops a stale page from taking the whole UI down with it.
+
+- **One missing element no longer kills every later line of `app.js`.** Wiring
+  up a button that isn't there threw, which stopped the rest of the file from
+  running - including the constants near the bottom. The visible symptom was an
+  unrelated tab failing with "Cannot access 'STATUS_PILL' before
+  initialization". Event wiring now skips missing nodes and logs which one.
+- **It says what's actually wrong.** If anything was missing, the page shows
+  "This page is out of date. Reload the page to get the current version."
+- Status labels moved to the top of the file with the other constants, so they
+  can't land in the temporal dead zone again.
+
+This combination showed up when a browser paired a fresh `app.js` with an
+`index.html` it still had cached - the caching fix in 0.3.1 is what prevents
+the mismatch; this is the damage control for when it happens anyway.
+
 ## 0.3.1
 
 Fixes the frontend serving a stale copy of itself after an update.
