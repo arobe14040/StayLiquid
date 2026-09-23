@@ -129,7 +129,15 @@
       </div>
 
       <div class="card">
-        <h2>Recent runs</h2>
+        <div class="hero-head">
+          <h2 id="history-day-title">Runs today</h2>
+          <div class="date-picker">
+            <button class="btn btn-icon" id="day-prev" aria-label="Previous day">&#8249;</button>
+            <input type="date" id="day-input" aria-label="Show runs for this day" />
+            <button class="btn btn-icon" id="day-next" aria-label="Next day">&#8250;</button>
+            <button class="btn btn-small" id="day-today">Today</button>
+          </div>
+        </div>
         <div id="history-list" class="stack"></div>
       </div>
     </section>

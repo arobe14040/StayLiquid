@@ -22,8 +22,10 @@
   every *scheduled* run until it expires; manual "Run now" / zone test-fires
   still work during a delay.
 - **History** - an overview of the last two weeks: how much water went out,
-  how long the system ran, a daily activity chart, and a log of every run.
-  Anything that errored or was skipped is pulled out into a panel at the top.
+  how long the system ran, a daily activity chart, and the day's runs. A
+  program shows as one run with its zones as numbered steps, so you can see at
+  a glance which step failed and which watered. Anything that errored or was
+  skipped is pulled out into a panel at the top, which can be marked as seen.
 
 Weather-based auto rain-delay is not implemented yet - it's a manual button
 for now, by design.

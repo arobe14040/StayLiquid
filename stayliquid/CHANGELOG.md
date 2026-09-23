@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0
+
+The History tab now reads as runs rather than as a list of zone rows.
+
+- **A program is one run with numbered steps.** Its zones appear as a strip -
+  `1 Back Lawn ✓  2 Front Lawn ✓  3 Garden Beds ✕  4 Side Strip ✕` - so which
+  part of a program failed is obvious without piecing four rows together. The
+  failures are then spelled out underneath.
+- **Three outcomes, not two.** A zone that watered, one cut short on purpose
+  (you stopped it, or it was switched off in Home Assistant), and one that
+  failed now read differently. Lumping the middle in with either was
+  misleading: "all 6 zones watered" was being shown for a run where one
+  didn't.
+- **The day's runs, not everything ever.** Defaults to today, with a date
+  control and arrows to step through; each day is fetched when you pick it.
+  Clicking a bar in the activity chart opens that day.
+- **"Needs a look" can be marked as seen.** Clearing it only drops the flag -
+  the runs stay in the history, and a failed run still shows as failed.
+- Runs are now recorded with a group, a step number and a step count. Existing
+  databases gain the columns on upgrade and their rows read as single-step
+  runs.
+
 ## 0.7.0
 
 **Pause watering** on the Dashboard, for when you need the pressure indoors.

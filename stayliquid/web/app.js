@@ -1373,15 +1373,54 @@ function renderProgramsList(programs) {
 
 // ---- history tab ------------------------------------------------------------
 
+let historyDay = null;   // YYYY-MM-DD currently shown; null means "today"
+
+function todayIso() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function shiftDay(iso, days) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 async function loadHistoryTab() {
-  const [stats, rows] = await Promise.all([
+  historyDay = historyDay || todayIso();
+  const [stats, day] = await Promise.all([
     apiGet("api/history/stats?days=14"),
-    apiGet("api/history?limit=60"),
+    apiGet(`api/history?date=${historyDay}`),
   ]);
   renderAttention(stats);
   renderHistoryStats(stats);
   renderActivityChart(stats);
-  renderHistoryList(rows);
+  renderDayPicker();
+  renderRuns(day.runs);
+}
+
+/** Fetch just the chosen day - the tab no longer loads everything ever run. */
+async function showDay(iso) {
+  historyDay = iso;
+  renderDayPicker();
+  el("history-list").innerHTML = `<div class="empty">Loading&#8230;</div>`;
+  const day = await apiGet(`api/history?date=${iso}`);
+  renderRuns(day.runs);
+}
+
+function renderDayPicker() {
+  const today = todayIso();
+  el("day-input").value = historyDay;
+  el("day-input").max = today;
+  el("day-next").disabled = historyDay >= today;
+  el("day-today").hidden = historyDay === today;
+
+  const label = historyDay === today
+    ? "Runs today"
+    : historyDay === shiftDay(today, -1)
+      ? "Runs yesterday"
+      : `Runs on ${fmtShortDate(historyDay)}`;
+  el("history-day-title").textContent = label;
 }
 
 function renderAttention(stats) {
@@ -1418,6 +1457,7 @@ function renderAttention(stats) {
       <div class="attention-head">
         <span class="attention-icon" aria-hidden="true">${hasError ? "&#9888;" : "&#9208;"}</span>
         <h2>${items.length} run${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} a look</h2>
+        <button class="btn btn-small" id="dismiss-attention">Mark as seen</button>
       </div>
       <p class="hint">
         ${hasError
@@ -1427,6 +1467,17 @@ function renderAttention(stats) {
       <div class="stack">${rows}</div>
     </div>
   `;
+
+  host.querySelector("#dismiss-attention").addEventListener("click", () =>
+    guard(async () => {
+      // Clears the flag only - the runs stay in the history either way.
+      const { cleared } = await apiPost("api/history/acknowledge", {
+        run_ids: items.map((r) => r.id),
+      });
+      await loadHistoryTab();
+      toast(`${cleared} run${cleared === 1 ? "" : "s"} marked as seen.`);
+    })
+  );
 }
 
 function renderHistoryStats(stats) {
@@ -1506,6 +1557,17 @@ function renderActivityChart(stats) {
       tip.style.top = `${Math.max(bar.top - host.top - 8, tip.offsetHeight + 2)}px`;
     });
     col.addEventListener("mouseleave", () => { tip.hidden = true; });
+
+    // The chart is the obvious place to spot a bad day, so let it open one.
+    col.classList.add("is-clickable");
+    col.setAttribute("role", "button");
+    col.setAttribute("tabindex", "0");
+    col.setAttribute("aria-label", `Show runs for ${d.weekday}, ${fmtShortDate(d.date)}`);
+    const open = () => guard(() => showDay(d.date));
+    col.addEventListener("click", open);
+    col.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
   });
 }
 
@@ -1514,53 +1576,106 @@ function fmtShortDate(iso) {
   return new Date(y, m - 1, d).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function dayHeading(iso) {
-  const today = new Date();
-  const date = new Date(iso);
-  const sameDay = (a, b) => a.toDateString() === b.toDateString();
-  if (sameDay(date, today)) return "Today";
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (sameDay(date, yesterday)) return "Yesterday";
-  return date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+// Three outcomes, not two: a zone that watered, one deliberately cut short, and
+// one that failed. Lumping the middle in with either misreads what happened.
+const STEP_OK = new Set(["completed", "running"]);
+const STEP_CUT_SHORT = new Set(["stopped", "stopped_external", "paused_expired"]);
+
+function stepOutcome(status) {
+  if (STEP_OK.has(status)) return "ok";
+  return STEP_CUT_SHORT.has(status) ? "cut" : "bad";
 }
 
-function renderHistoryList(rows) {
+function fmtClock(iso) {
+  return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+}
+
+/**
+ * One card per program execution, with its zones as numbered steps. The point
+ * is being able to see at a glance that steps 1-2 watered and 3-4 didn't,
+ * instead of reading four separate rows and working out they belonged together.
+ */
+function renderRuns(runs) {
   const list = el("history-list");
-  if (!rows.length) {
-    emptyState(list, "No runs logged yet.");
+  if (!runs.length) {
+    emptyState(list, "Nothing ran on this day.");
     return;
   }
 
   list.innerHTML = "";
-  let currentDay = null;
-  rows.forEach((r) => {
-    const heading = dayHeading(r.started_at);
-    if (heading !== currentDay) {
-      currentDay = heading;
-      const h = document.createElement("div");
-      h.className = "day-heading";
-      h.textContent = heading;
-      list.appendChild(h);
+  runs.forEach((run) => {
+    const failed = run.problem_count > 0;
+    const card = document.createElement("div");
+    card.className = `run-card${failed ? " has-problem" : ""}`;
+
+    const when = fmtClock(run.started_at);
+    const source = run.trigger_source === "manual" ? "started by hand" : "scheduled";
+
+    const cutShort = run.unfinished_count - run.problem_count;
+    let summary;
+    if (run.whole_program) {
+      summary = STATUS_LABEL[run.steps[0].status] || run.steps[0].status;
+    } else if (failed) {
+      summary = `${run.problem_count} of ${run.steps.length} didn't water`;
+    } else if (cutShort) {
+      summary = `${cutShort} of ${run.steps.length} cut short`;
+    } else {
+      summary = `all ${run.steps.length} zone${run.steps.length === 1 ? "" : "s"} watered`;
     }
 
-    const label = STATUS_LABEL[r.status] || r.status;
-    // A skipped run never opened a valve, so its elapsed time means nothing.
-    const ran = r.started_at && r.ended_at && !r.status.startsWith("skipped")
-      ? fmtDuration((new Date(r.ended_at) - new Date(r.started_at)) / 60000)
-      : null;
-    const time = new Date(r.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const source = r.zone_name ? escapeHtml(r.program_name || "Manual") : "Whole program";
+    card.innerHTML = `
+      <div class="run-head">
+        <div>
+          <div class="run-name">${escapeHtml(run.program_name)}</div>
+          <div class="run-meta">${escapeHtml(when)} &middot; ${source}${
+            run.minutes ? ` &middot; ${fmtDuration(run.minutes)} of watering` : ""
+          }</div>
+        </div>
+        <span class="pill ${failed ? "pill-danger" : cutShort ? "pill-warn" : "pill-quiet"}">${escapeHtml(summary)}</span>
+      </div>
+    `;
 
-    list.appendChild(
-      rowItem(
-        escapeHtml(r.zone_name || r.program_name || "Run"),
-        `${escapeHtml(time)} &middot; ${source}${ran ? ` &middot; ran ${ran}` : ""}`,
-        `<span class="pill ${STATUS_PILL[r.status] || "pill-quiet"}">${escapeHtml(label)}</span>`
-      )
-    );
+    if (!run.whole_program) {
+      const marks = { ok: "&check;", cut: "&ndash;", bad: "&times;" };
+      const steps = run.steps
+        .map((s) => {
+          const outcome = stepOutcome(s.status);
+          const label = STATUS_LABEL[s.status] || s.status;
+          return `<li class="step step-${outcome}"
+                      title="${escapeHtml(`${s.zone_name || "Zone"} - ${label}`)}">
+            <span class="step-n">${s.step ?? "&bull;"}</span>
+            <span class="step-zone">${escapeHtml(s.zone_name || "Zone")}</span>
+            <span class="step-mark" aria-hidden="true">${marks[outcome]}</span>
+            <span class="sr-only">${escapeHtml(label)}</span>
+          </li>`;
+        })
+        .join("");
+      card.insertAdjacentHTML("beforeend", `<ol class="step-strip">${steps}</ol>`);
+    }
+
+    // Spell the failures out underneath; the strip says which, not why.
+    const problems = run.steps.filter((s) => stepOutcome(s.status) !== "ok");
+    if (problems.length) {
+      const lines = problems
+        .map((s) => `<li><strong>${
+          s.step ? `Step ${s.step}` : "This run"
+        }${s.zone_name ? ` &middot; ${escapeHtml(s.zone_name)}` : ""}</strong> - ${
+          escapeHtml(STATUS_LABEL[s.status] || s.status)
+        }</li>`)
+        .join("");
+      card.insertAdjacentHTML("beforeend", `<ul class="run-problems">${lines}</ul>`);
+    }
+
+    list.appendChild(card);
   });
 }
+
+on("day-prev", "click", () => guard(() => showDay(shiftDay(historyDay, -1))));
+on("day-next", "click", () => guard(() => showDay(shiftDay(historyDay, 1))));
+on("day-today", "click", () => guard(() => showDay(todayIso())));
+on("day-input", "change", (e) => {
+  if (e.target.value) guard(() => showDay(e.target.value));
+});
 
 // ---- init -------------------------------------------------------------------
 

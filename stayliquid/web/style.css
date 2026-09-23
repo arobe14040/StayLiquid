@@ -739,8 +739,109 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   margin-bottom: 4px;
 }
 .attention-head h2 { margin: 0; font-size: 15px; }
+.attention-head .btn { margin-left: auto; }
 .attention-icon { font-size: 15px; line-height: 1; }
 .attention .hint { margin-bottom: 12px; }
+
+/* ------------------------------------------------------- history run cards */
+
+.date-picker { display: flex; align-items: center; gap: 4px; }
+.date-picker input[type="date"] {
+  width: auto;
+  padding: 6px 9px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.date-picker .btn-icon { font-size: 18px; line-height: 1; padding: 4px 9px; }
+
+.run-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 13px 14px;
+}
+.run-card.has-problem { border-left: 3px solid var(--critical); }
+
+.run-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.run-name { font-weight: 650; font-size: 14px; }
+.run-meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+/* The step strip: one chip per zone, in the order they were meant to run, so a
+   gap in the middle of a program is obvious without reading any of it. */
+.step-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px 4px 4px;
+  font-size: 12px;
+  background: var(--surface);
+}
+.step-n {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--border);
+  color: var(--muted);
+}
+.step-zone { font-weight: 600; }
+.step-mark { font-weight: 700; }
+
+.step-ok .step-n { background: var(--accent-soft); color: var(--accent); }
+.step-ok .step-mark { color: var(--accent); }
+.step-cut { border-color: var(--warn); }
+.step-cut .step-n { background: var(--warn-soft); color: var(--warn); }
+.step-cut .step-mark { color: var(--warn); }
+.step-bad { border-color: var(--critical); }
+.step-bad .step-n { background: var(--critical); color: #fff; }
+.step-bad .step-mark { color: var(--critical); }
+
+.run-problems {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.run-problems strong { color: var(--text); font-weight: 650; }
+
+.chart-col.is-clickable { cursor: pointer; }
+.chart-col.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .day-heading {
   font-size: 11px;

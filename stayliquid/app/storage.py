@@ -66,8 +66,15 @@ CREATE TABLE IF NOT EXISTS run_log (
     trigger_source TEXT,     -- 'scheduled' | 'manual'
     started_at TEXT,
     ended_at TEXT,
-    status TEXT               -- 'running' | 'completed' | 'skipped_rain_delay' | 'error'
+    status TEXT,              -- 'running' | 'completed' | 'skipped_rain_delay' | 'error'
+    group_id TEXT,            -- one id per program execution, so its zones read as one run
+    step INTEGER,             -- this zone's place in that execution, 1-based
+    step_count INTEGER,       -- how many zones the execution had
+    acknowledged_at TEXT      -- set when the user has seen and dismissed a problem
 );
+-- Indexes on these columns are created after the migration below, not here:
+-- on a database that predates them the table already exists, so the columns
+-- wouldn't be there yet and indexing them would fail.
 """
 
 
@@ -93,8 +100,28 @@ def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
     _migrate_to_start_times(conn)
+    _add_run_log_columns(conn)
     conn.execute("INSERT OR IGNORE INTO rain_delay (id, until) VALUES (1, NULL)")
     conn.execute("INSERT OR IGNORE INTO watering_pause (id, until) VALUES (1, NULL)")
+    conn.commit()
+
+
+def _add_run_log_columns(conn) -> None:
+    """Grouping, step numbering and acknowledgement arrived after the first
+    databases were created. All four are nullable, so they can just be added -
+    older rows simply read as single-step runs that were never dismissed."""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(run_log)").fetchall()}
+    for column, declaration in (
+        ("group_id", "TEXT"),
+        ("step", "INTEGER"),
+        ("step_count", "INTEGER"),
+        ("acknowledged_at", "TEXT"),
+    ):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE run_log ADD COLUMN {column} {declaration}")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS run_log_started_at ON run_log (started_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS run_log_group ON run_log (group_id)")
     conn.commit()
 
 
@@ -335,15 +362,26 @@ def set_pause(until_iso: str | None) -> str | None:
 
 # ---- run log ------------------------------------------------------------
 
-def start_run(program_id: int, program_name: str, zone_id: int, zone_name: str, trigger_source: str) -> int:
+def start_run(
+    program_id: int | None,
+    program_name: str,
+    zone_id: int,
+    zone_name: str,
+    trigger_source: str,
+    group_id: str | None = None,
+    step: int | None = None,
+    step_count: int | None = None,
+) -> int:
     with tx() as conn:
         cur = conn.execute(
             """
             INSERT INTO run_log (program_id, program_name, zone_id, zone_name,
-                                  trigger_source, started_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'running')
+                                  trigger_source, started_at, status,
+                                  group_id, step, step_count)
+            VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
             """,
-            (program_id, program_name, zone_id, zone_name, trigger_source, now_iso()),
+            (program_id, program_name, zone_id, zone_name, trigger_source, now_iso(),
+             group_id, step, step_count),
         )
         return cur.lastrowid
 
@@ -363,6 +401,9 @@ def log_skip(
     zone_id: int | None = None,
     zone_name: str | None = None,
     trigger_source: str = "scheduled",
+    group_id: str | None = None,
+    step: int | None = None,
+    step_count: int | None = None,
 ) -> None:
     """Record a run that never started. Zone details are omitted for a
     whole-program skip (rain delay) and filled in for a single-zone one."""
@@ -371,10 +412,12 @@ def log_skip(
         conn.execute(
             """
             INSERT INTO run_log (program_id, program_name, zone_id, zone_name,
-                                  trigger_source, started_at, ended_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  trigger_source, started_at, ended_at, status,
+                                  group_id, step, step_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (program_id, program_name, zone_id, zone_name, trigger_source, ts, ts, reason),
+            (program_id, program_name, zone_id, zone_name, trigger_source, ts, ts, reason,
+             group_id, step, step_count),
         )
 
 
@@ -409,6 +452,51 @@ def list_history_since(since_iso: str) -> list[dict]:
         "SELECT * FROM run_log WHERE started_at >= ? ORDER BY id DESC", (since_iso,)
     ).fetchall()
     return [row_to_dict(r) for r in rows]
+
+
+def list_history_between(start_iso: str, end_iso: str) -> list[dict]:
+    """Runs that started inside a window, oldest first so steps read in order."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM run_log WHERE started_at >= ? AND started_at < ? ORDER BY id",
+        (start_iso, end_iso),
+    ).fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+def list_unacknowledged(statuses: tuple[str, ...], limit: int = 20) -> list[dict]:
+    conn = get_conn()
+    placeholders = ",".join("?" * len(statuses))
+    rows = conn.execute(
+        f"""
+        SELECT * FROM run_log
+        WHERE status IN ({placeholders}) AND acknowledged_at IS NULL
+        ORDER BY id DESC LIMIT ?
+        """,
+        (*statuses, limit),
+    ).fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+def acknowledge_runs(run_ids: list[int] | None, statuses: tuple[str, ...]) -> int:
+    """Mark problem rows as seen. With no ids, clears everything outstanding."""
+    ts = now_iso()
+    with tx() as conn:
+        if run_ids:
+            placeholders = ",".join("?" * len(run_ids))
+            cur = conn.execute(
+                f"UPDATE run_log SET acknowledged_at = ? "
+                f"WHERE acknowledged_at IS NULL AND id IN ({placeholders})",
+                (ts, *run_ids),
+            )
+        else:
+            placeholders = ",".join("?" * len(statuses))
+            cur = conn.execute(
+                f"UPDATE run_log SET acknowledged_at = ? "
+                f"WHERE acknowledged_at IS NULL AND status IN ({placeholders})",
+                (ts, *statuses),
+            )
+        return cur.rowcount
 
 
 def list_history(limit: int = 50) -> list[dict]:

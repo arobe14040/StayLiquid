@@ -6,6 +6,7 @@ right now" for the dashboard to poll.
 import asyncio
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from starlette.concurrency import run_in_threadpool
 
@@ -367,14 +368,23 @@ async def run_program(program_id: int, trigger_source: str = "scheduled") -> Non
     if not zones:
         return
 
+    # One id for the whole execution, so the history can show its zones as a
+    # single run and say which step of it went wrong.
+    group_id = uuid4().hex
+    steps = [(index, zone) for index, zone in enumerate(zones, start=1)]
+
     if program["run_mode"] == "simultaneous":
-        await asyncio.gather(*(_run_zone(program, z, trigger_source) for z in zones))
+        await asyncio.gather(*(
+            _run_zone(program, zone, trigger_source, group_id, step, len(zones))
+            for step, zone in steps
+        ))
     else:
-        for z in zones:
-            await _run_zone(program, z, trigger_source)
+        for step, zone in steps:
+            await _run_zone(program, zone, trigger_source, group_id, step, len(zones))
 
 
-async def _run_zone(program: dict, zone: dict, trigger_source: str) -> None:
+async def _run_zone(program: dict, zone: dict, trigger_source: str,
+                    group_id: str, step: int, step_count: int) -> None:
     await _water(
         program_id=program["id"],
         program_name=program["name"],
@@ -383,6 +393,9 @@ async def _run_zone(program: dict, zone: dict, trigger_source: str) -> None:
         entity_id=zone["entity_id"],
         minutes=zone["duration_minutes"],
         trigger_source=trigger_source,
+        group_id=group_id,
+        step=step,
+        step_count=step_count,
     )
 
 
@@ -409,6 +422,9 @@ async def _water(
     entity_id: str,
     minutes: float,
     trigger_source: str,
+    group_id: str | None = None,
+    step: int | None = None,
+    step_count: int | None = None,
 ) -> None:
     """Open one valve, wait, close it - logging the outcome either way.
 
@@ -422,12 +438,13 @@ async def _water(
             log.error("Skipping %s - %s is unavailable in Home Assistant.", zone_name, entity_id)
             await run_in_threadpool(
                 storage.log_skip, program_id, program_name, "skipped_unavailable",
-                zone_id, zone_name, trigger_source,
+                zone_id, zone_name, trigger_source, group_id, step, step_count,
             )
             return
 
         run_id = await run_in_threadpool(
-            storage.start_run, program_id, program_name, zone_id, zone_name, trigger_source
+            storage.start_run, program_id, program_name, zone_id, zone_name,
+            trigger_source, group_id, step, step_count,
         )
         entry = {
             "run_id": run_id,

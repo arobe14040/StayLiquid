@@ -1,7 +1,7 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -13,8 +13,15 @@ from ..scheduler import next_events, scheduler
 
 router = APIRouter()
 
-# Anything in here is worth the user's attention on the History tab.
+# Worth nagging about: something went wrong, or a run was skipped for a reason
+# the user may not have intended. Deliberate stops are deliberately absent -
+# being reminded of a button you just pressed is noise.
 PROBLEM_STATUSES = ("error", "interrupted", "skipped_rain_delay", "skipped_unavailable")
+
+# Didn't deliver its full watering, whatever the reason. Broader than the above,
+# because "did this zone get its water?" and "should I be told about it?" are
+# different questions.
+FINISHED_STATUSES = ("completed", "running")
 
 
 class RainDelayIn(BaseModel):
@@ -133,7 +140,11 @@ async def history_stats(days: int = 14):
             "zones": len(zones_seen),
         },
         "by_day": by_day,
-        "attention": [r for r in rows if r["status"] in PROBLEM_STATUSES][:8],
+        # Not limited to the stats window: something that went wrong three weeks
+        # ago and was never looked at is exactly what this panel is for.
+        "attention": await run_in_threadpool(
+            storage.list_unacknowledged, PROBLEM_STATUSES, 12
+        ),
     }
 
 
@@ -154,6 +165,88 @@ def _elapsed_minutes(row: dict) -> float:
     return max(0.0, (ended - started).total_seconds() / 60)
 
 
+class AcknowledgeIn(BaseModel):
+    run_ids: list[int] | None = None
+
+
 @router.get("/history")
-async def history(limit: int = 50):
-    return await run_in_threadpool(storage.list_history, limit)
+async def history(date: str | None = None):
+    """One local day's runs, grouped so a program reads as a single run with
+    numbered steps rather than a loose pile of zone rows."""
+    tz = scheduler.timezone
+    try:
+        day = datetime.fromisoformat(date).date() if date else datetime.now(tz).date()
+    except ValueError:
+        raise HTTPException(400, "Date must look like YYYY-MM-DD.")
+
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    rows = await run_in_threadpool(
+        storage.list_history_between,
+        start.astimezone(timezone.utc).isoformat(),
+        (start + timedelta(days=1)).astimezone(timezone.utc).isoformat(),
+    )
+    return {"date": day.isoformat(), "runs": _group_runs(rows)}
+
+
+def _group_runs(rows: list[dict]) -> list[dict]:
+    """Fold per-zone rows back into the executions they came from. Rows written
+    before grouping existed have no group_id, so each stands alone."""
+    grouped: dict[str, dict] = {}
+    order: list[str] = []
+
+    for row in rows:
+        key = row["group_id"] or f"row-{row['id']}"
+        if key not in grouped:
+            grouped[key] = {
+                "id": key,
+                "program_id": row["program_id"],
+                "program_name": row["program_name"] or "Manual run",
+                "trigger_source": row["trigger_source"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+                "step_count": row["step_count"] or 0,
+                "steps": [],
+            }
+            order.append(key)
+
+        run = grouped[key]
+        run["step_count"] = max(run["step_count"], row["step_count"] or 0)
+        if row["ended_at"] and (not run["ended_at"] or row["ended_at"] > run["ended_at"]):
+            run["ended_at"] = row["ended_at"]
+        run["steps"].append({
+            "id": row["id"],
+            "step": row["step"],
+            "zone_name": row["zone_name"],
+            "status": row["status"],
+            "started_at": row["started_at"],
+            "ended_at": row["ended_at"],
+            "minutes": round(_elapsed_minutes(row), 1),
+            "acknowledged": bool(row["acknowledged_at"]),
+        })
+
+    runs = []
+    for key in order:
+        run = grouped[key]
+        run["steps"].sort(key=lambda s: (s["step"] or 0, s["started_at"] or ""))
+        unfinished = [s for s in run["steps"] if s["status"] not in FINISHED_STATUSES]
+        run["problem_count"] = len([s for s in unfinished if s["status"] in PROBLEM_STATUSES])
+        run["unfinished_count"] = len(unfinished)
+        run["done_count"] = len(run["steps"]) - len(unfinished)
+        run["minutes"] = round(sum(s["minutes"] for s in run["steps"]), 1)
+        # A program-level skip has no zone at all, so there is no step strip to
+        # draw - the run itself is the thing that didn't happen.
+        run["whole_program"] = all(s["zone_name"] is None for s in run["steps"])
+        runs.append(run)
+
+    runs.sort(key=lambda r: r["started_at"] or "", reverse=True)
+    return runs
+
+
+@router.post("/history/acknowledge")
+async def acknowledge(body: AcknowledgeIn):
+    """Clear the 'needs a look' panel - the runs stay in the history, they just
+    stop being flagged."""
+    cleared = await run_in_threadpool(
+        storage.acknowledge_runs, body.run_ids, PROBLEM_STATUSES
+    )
+    return {"cleared": cleared}
