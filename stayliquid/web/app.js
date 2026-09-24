@@ -2007,8 +2007,10 @@ function renderAttention(stats) {
   // The list is only the latest few; the total is how many are outstanding.
   const total = Math.max(stats.attention_total ?? items.length, items.length);
 
-  // Errors mean something went wrong; a skip is usually deliberate (rain delay).
-  const hasError = items.some((r) => r.status === "error" || r.status === "interrupted");
+  // Something went wrong, as opposed to a skip that was deliberate (a rain
+  // delay). The same line History draws in red - an unavailable zone didn't
+  // water and nobody chose that, so it isn't "skipped on purpose".
+  const hasError = items.some((r) => FAILURE_STATUSES.has(r.status));
   const row = (r) => {
     const label = STATUS_LABEL[r.status] || r.status;
     // A whole-program skip has no zone, so the program name is already the title.
@@ -2040,7 +2042,7 @@ function renderAttention(stats) {
       </div>
       <p class="hint">
         ${hasError
-          ? "A zone failed or was cut short. Check the valve and the add-on log."
+          ? "A zone didn't water - it failed, couldn't be reached, or the add-on was interrupted. Check the valve and the add-on log."
           : "These runs were skipped on purpose - no water went out."}
       </p>
       <div class="stack">${items.slice(0, SHOWN).map(row).join("")}</div>
@@ -2110,6 +2112,9 @@ function renderRuns(runs) {
     // for a reason that isn't a fault, like a rain delay or someone stopping it.
     const failed = run.steps.some((s) => FAILURE_STATUSES.has(s.status));
     const partial = !failed && run.unfinished_count > 0;
+    // Counted as fine alongside "completed" - it hasn't gone wrong - but it
+    // hasn't finished either, and saying "Completed" about it is just wrong.
+    const watering = run.steps.find((s) => s.status === "running");
 
     // A zone run by hand is a single step with no number - it reads as that
     // zone, not as a program called "Manual run" with one anonymous step.
@@ -2123,12 +2128,17 @@ function renderRuns(runs) {
     if (run.whole_program) {
       summary = STATUS_LABEL[run.steps[0].status] || run.steps[0].status;
     } else if (solo) {
-      summary = failed ? "Failed" : partial ? STATUS_LABEL[run.steps[0].status] || "Didn't finish" : "Completed";
+      summary = failed ? "Failed" : partial ? STATUS_LABEL[run.steps[0].status] || "Didn't finish"
+        : watering ? "Watering now" : "Completed";
     } else if (failed) {
       const first = run.steps.find((s) => FAILURE_STATUSES.has(s.status));
       summary = first?.step ? `Failed at step ${first.step}` : "Failed";
     } else if (partial) {
       summary = `${run.unfinished_count} of ${run.steps.length} didn't finish`;
+    } else if (watering) {
+      summary = watering.step && run.step_count > 1
+        ? `Watering · step ${watering.step} of ${run.step_count}`
+        : "Watering now";
     } else {
       summary = run.steps.length === 1 ? "Completed" : `All ${run.steps.length} zones watered`;
     }
@@ -2148,12 +2158,12 @@ function renderRuns(runs) {
       <div class="run-card">
         <div class="run-head">
           <div class="run-name">${escapeHtml(title)}</div>
-          <span class="pill ${failed ? "pill-danger" : partial ? "pill-warn" : "pill-quiet"}">${escapeHtml(summary)}</span>
+          <span class="pill ${failed ? "pill-danger" : partial ? "pill-warn" : watering ? "pill-on" : "pill-quiet"}">${escapeHtml(summary)}</span>
           <span class="run-water">${inches >= 0.01 ? `${escapeHtml(fmtInches(inches))} per zone` : ""}</span>
         </div>
         <div class="run-sub">${
           solo ? "Run by hand" : run.trigger_source === "manual" ? "Started by hand" : "Scheduled"
-        }${run.ended_at ? ` &middot; finished ${escapeHtml(fmtClock(run.ended_at))}` : ""}</div>
+        }${run.ended_at && !watering ? ` &middot; finished ${escapeHtml(fmtClock(run.ended_at))}` : ""}</div>
       </div>
     `;
 
@@ -2193,9 +2203,11 @@ function renderRuns(runs) {
         .map((s) => {
           const outcome = stepOutcome(s.status);
           const label = STATUS_LABEL[s.status] || s.status;
-          const detail = outcome === "ok"
-            ? s.minutes ? fmtDuration(s.minutes) : "—"
-            : label;
+          const detail = s.status === "running"
+            ? "Watering now"
+            : outcome === "ok"
+              ? s.minutes ? fmtDuration(s.minutes) : "—"
+              : label;
           return `<li class="run-step run-step-${outcome}"
                       title="${escapeHtml(`${s.zone_name || "Zone"} - ${label}`)}">
             <span class="run-step-n">${s.step ? `Step ${s.step}` : "Zone"}</span>

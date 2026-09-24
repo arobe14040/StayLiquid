@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.3
+
+Two History labels that said the wrong thing, and a README with screenshots.
+
+- **A run still watering no longer says *Completed*.** It shows **Watering
+  now**, or **Watering · step 2 of 3** for a program partway through its zones,
+  in green. It also no longer shows a "finished at" time taken from a step that
+  had already ended.
+- **An unavailable zone is a problem, not a deliberate skip.** The *needs a
+  look* panel called it "skipped on purpose - no water went out". It's now
+  shown in red with the other failures: a zone didn't water, so check the valve
+  and the add-on log.
+- The README gains an **Add repository** button that opens your own Home
+  Assistant with this repository filled in, plus screenshots of every tab.
+
 ## 0.10.2
 
 **A zone switch no longer bounces back.** Turning a zone off could flick the
