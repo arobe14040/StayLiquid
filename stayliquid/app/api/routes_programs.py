@@ -1,5 +1,6 @@
 import asyncio
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
@@ -7,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import presets, runner, storage
 from ..runner import run_program
-from ..scheduler import remove_program, sync_program
+from ..scheduler import next_run_times, remove_program, scheduler, sync_program
 
 router = APIRouter()
 
@@ -76,7 +77,9 @@ async def list_presets():
 
 @router.get("/programs")
 async def list_programs():
-    return await run_in_threadpool(storage.list_programs)
+    programs = await run_in_threadpool(storage.list_programs)
+    upcoming = next_run_times()
+    return [{**p, "next_run_time": upcoming.get(p["id"])} for p in programs]
 
 
 @router.get("/programs/{program_id}")
@@ -89,7 +92,12 @@ async def get_program(program_id: int):
 
 @router.post("/programs")
 async def create_program(body: ProgramIn):
-    program = await run_in_threadpool(storage.create_program, body.model_dump())
+    data = body.model_dump()
+    # "Today" where the lawn is. Left to storage it would be the UTC date, which
+    # is already tomorrow every evening in the Americas - so an interval program
+    # saved after dinner would skip its first day.
+    data["anchor_date"] = data.get("anchor_date") or datetime.now(scheduler.timezone).date().isoformat()
+    program = await run_in_threadpool(storage.create_program, data)
     sync_program(program)
     return program
 

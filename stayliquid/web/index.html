@@ -34,10 +34,26 @@
     <!-- ---------------------------------------------------------- Dashboard -->
     <section id="tab-dashboard" class="tab-panel active">
 
+      <div id="pause-banner" class="attention is-warning" hidden></div>
+
+      <!-- The day as one picture: a lane per zone, blocks for what watered,
+           what is watering and what is still queued. -->
+      <div class="card card-hero">
+        <div class="list-head list-head-tight">
+          <h2>Today</h2>
+          <p class="hint" id="today-sub"></p>
+          <div class="hero-actions">
+            <span id="running-count" class="pill pill-quiet">Idle</span>
+            <button class="btn btn-small" id="pause-btn" hidden>Pause watering</button>
+          </div>
+        </div>
+        <div id="today-track" class="track"></div>
+      </div>
+
       <details class="card zone-panel" id="zone-panel" open>
         <summary class="zone-panel-head">
           <div class="zone-panel-title">
-            <h2>Zones</h2>
+            <h2>Zone control</h2>
             <p class="hint" id="zone-panel-hint"></p>
           </div>
           <span class="pill pill-quiet" id="zone-panel-count"></span>
@@ -45,38 +61,32 @@
         <div id="zone-toggles" class="zone-grid"></div>
       </details>
 
-      <div id="pause-banner" class="attention is-warning" hidden></div>
-
-      <div class="card card-hero">
-        <div class="hero-head">
-          <h2>Running now</h2>
-          <div class="hero-actions">
-            <span id="running-count" class="pill pill-quiet">Idle</span>
-            <button class="btn btn-small" id="pause-btn" hidden>Pause watering</button>
-          </div>
+      <div class="tile-row">
+        <div class="tile">
+          <div class="tile-label">Next cycle</div>
+          <div class="tile-value" id="tile-next-value">&mdash;</div>
+          <div class="tile-sub" id="tile-next-sub"></div>
         </div>
-        <div id="current-runs" class="stack"></div>
-      </div>
 
-      <div class="card">
-        <h2>Up next</h2>
-        <div id="next-events" class="stack"></div>
-      </div>
-
-      <div class="card">
-        <div class="hero-head">
-          <h2>Rain delay</h2>
-          <button class="btn btn-ghost btn-small" id="clear-delay-btn">Clear</button>
+        <div class="tile">
+          <div class="tile-label">Water today</div>
+          <div class="tile-value" id="tile-water-value">&mdash;</div>
+          <div class="tile-sub" id="tile-water-sub"></div>
         </div>
-        <p class="hint">Pauses every scheduled program. Manual runs still work.</p>
-        <div class="btn-row">
-          <button class="btn" data-delay="12">12 hours</button>
-          <button class="btn" data-delay="24">24 hours</button>
-          <button class="btn" data-delay="48">48 hours</button>
-          <button class="btn" data-delay="72">72 hours</button>
-          <div class="inline-field">
-            <input type="number" id="custom-delay-hours" min="1" max="720" placeholder="Hours" />
-            <button class="btn" id="apply-custom-delay">Set</button>
+
+        <div class="tile">
+          <div class="tile-label">Rain delay</div>
+          <div class="tile-value" id="tile-delay-value">Off</div>
+          <div class="tile-sub" id="tile-delay-sub">Holds every scheduled program. Manual runs still work.</div>
+          <div class="tile-actions">
+            <button class="btn btn-small" data-delay="12">12h</button>
+            <button class="btn btn-small" data-delay="24">24h</button>
+            <button class="btn btn-small" data-delay="48">48h</button>
+            <button class="btn btn-small" data-delay="72">72h</button>
+            <input type="number" id="custom-delay-hours" min="1" max="720"
+                   placeholder="Hrs" aria-label="Custom rain delay in hours" />
+            <button class="btn btn-small" id="apply-custom-delay">Set</button>
+            <button class="btn btn-ghost btn-small" id="clear-delay-btn">Clear</button>
           </div>
         </div>
       </div>
@@ -86,7 +96,13 @@
     <!-- -------------------------------------------------------------- Zones -->
     <section id="tab-zones" class="tab-panel">
 
-      <div class="card">
+      <div class="list-head">
+        <h2>Your zones</h2>
+        <p class="hint" id="zones-sub"></p>
+        <button class="btn btn-primary" id="show-add-zone">+ Add a zone</button>
+      </div>
+
+      <div class="card" id="add-zone-card" hidden>
         <h2>Add a zone</h2>
         <p class="hint">Each zone is one Home Assistant switch or valve entity - one sprinkler circuit.</p>
         <div class="field-row">
@@ -99,58 +115,40 @@
             <input type="text" id="new-zone-name" placeholder="e.g. Front lawn" />
           </label>
           <button class="btn btn-primary" id="add-zone-btn">Add zone</button>
+          <button class="btn btn-ghost" id="cancel-add-zone">Cancel</button>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Your zones</h2>
-        <div id="zones-list" class="stack"></div>
-      </div>
+      <div id="zones-list" class="card-grid"></div>
 
     </section>
 
     <!-- ----------------------------------------------------------- Programs -->
     <section id="tab-programs" class="tab-panel">
-      <div class="card">
-        <div class="hero-head">
-          <h2>Your programs</h2>
-          <button class="btn btn-primary" id="new-program-btn">+ New program</button>
-        </div>
-        <div id="programs-list" class="stack"></div>
+      <div class="list-head">
+        <h2>Your programs</h2>
+        <p class="hint" id="programs-sub"></p>
+        <button class="btn btn-primary" id="new-program-btn">+ New program</button>
       </div>
+      <div id="programs-list" class="stack-lg"></div>
     </section>
 
     <!-- ------------------------------------------------------------ History -->
     <section id="tab-history" class="tab-panel">
       <div id="history-attention"></div>
 
-      <div class="card">
-        <div class="hero-head">
-          <h2>Last 14 days</h2>
-          <span id="history-timezone" class="pill pill-quiet"></span>
+      <div class="list-head">
+        <h2 id="history-day-title">Today</h2>
+        <p class="hint" id="history-day-sub"></p>
+        <div class="date-picker">
+          <button class="btn btn-icon" id="day-prev" aria-label="Previous day">&#8249;</button>
+          <input type="date" id="day-input" aria-label="Show runs for this day" />
+          <button class="btn btn-icon" id="day-next" aria-label="Next day">&#8250;</button>
+          <button class="btn btn-small" id="day-today">Today</button>
         </div>
-        <div id="history-stats" class="summary-grid"></div>
-        <figure id="history-chart" class="chart">
-          <figcaption class="chart-title">
-            <span>Time watering per day</span>
-            <span class="chart-peak" id="chart-peak"></span>
-          </figcaption>
-          <div class="chart-plot" id="chart-plot"></div>
-        </figure>
       </div>
 
-      <div class="card">
-        <div class="hero-head">
-          <h2 id="history-day-title">Runs today</h2>
-          <div class="date-picker">
-            <button class="btn btn-icon" id="day-prev" aria-label="Previous day">&#8249;</button>
-            <input type="date" id="day-input" aria-label="Show runs for this day" />
-            <button class="btn btn-icon" id="day-next" aria-label="Next day">&#8250;</button>
-            <button class="btn btn-small" id="day-today">Today</button>
-          </div>
-        </div>
-        <div id="history-list" class="stack"></div>
-      </div>
+      <div id="history-list" class="run-timeline"></div>
     </section>
 
   </main>

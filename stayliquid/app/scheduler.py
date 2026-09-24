@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -58,16 +58,24 @@ def _job_id(program_id: int, cycle_index: int) -> str:
 
 def _build_trigger(program: dict, start_time: str):
     hour, minute = (int(x) for x in start_time.split(":"))
+    # Passed explicitly because a trigger built as an object never looks at the
+    # scheduler's timezone: APScheduler 3 only applies that to triggers created
+    # from an alias string, and otherwise falls back to the container's local
+    # zone - which is exactly the possibly-stale value apply_timezone avoids.
+    tz = scheduler.timezone
 
     if program["schedule_type"] == "interval" and program.get("interval_days"):
-        anchor = program.get("anchor_date") or datetime.now().date().isoformat()
+        anchor = program.get("anchor_date") or datetime.now(tz).date().isoformat()
+        # Naive on purpose: the trigger reads it as wall-clock time in `tz`.
         start_date = datetime.fromisoformat(f"{anchor}T{start_time}:00")
-        return IntervalTrigger(days=int(program["interval_days"]), start_date=start_date)
+        return IntervalTrigger(
+            days=int(program["interval_days"]), start_date=start_date, timezone=tz
+        )
 
     weekdays = (program.get("weekdays") or "").strip()
     if not weekdays:
         return None  # nothing to schedule (e.g. a program saved with no days picked)
-    return CronTrigger(day_of_week=weekdays, hour=hour, minute=minute)
+    return CronTrigger(day_of_week=weekdays, hour=hour, minute=minute, timezone=tz)
 
 
 def sync_program(program: dict) -> None:
@@ -107,6 +115,69 @@ def sync_all() -> None:
         job.remove()
     for program in storage.list_programs():
         sync_program(program)
+
+
+def planned_today() -> list[dict]:
+    """Every zone slot still due before midnight, as absolute times.
+
+    Worked out here rather than in the browser for two reasons: the scheduler
+    runs in Home Assistant's timezone, which the viewer's browser may not share,
+    and an interval program's cadence hangs off an anchor date only the trigger
+    knows. Each job is one cycle and fires at most once a day, so its next run
+    time is the whole answer to "does this cycle still happen today?"."""
+    now = datetime.now(scheduler.timezone)
+    end_of_day = datetime.combine(
+        now.date() + timedelta(days=1), time.min, tzinfo=scheduler.timezone
+    )
+
+    programs: dict[int, dict | None] = {}
+    slots = []
+    for job in scheduler.get_jobs():
+        fire = job.next_run_time
+        if fire is None or fire >= end_of_day:
+            continue
+        program_id = job.args[0] if job.args else None
+        if program_id not in programs:
+            programs[program_id] = storage.get_program(program_id) if program_id else None
+        program = programs[program_id]
+        if not program:
+            continue
+
+        sequential = program["run_mode"] != "simultaneous"
+        offset = 0.0
+        for zone in program["zones"]:
+            minutes = float(zone["duration_minutes"] or 0)
+            start = fire + timedelta(minutes=offset if sequential else 0)
+            if sequential:
+                offset += minutes
+            slots.append(
+                {
+                    "program_id": program_id,
+                    "program_name": program["name"],
+                    "zone_id": zone["zone_id"],
+                    "start": start.isoformat(),
+                    "end": (start + timedelta(minutes=minutes)).isoformat(),
+                    "minutes": minutes,
+                }
+            )
+
+    slots.sort(key=lambda s: s["start"])
+    return slots
+
+
+def next_run_times() -> dict[int, str]:
+    """Each program's earliest upcoming run. Uncapped, unlike next_events(),
+    whose short list for the dashboard would drop programs from a longer one -
+    each cycle is its own job, so three programs of three cycles already fill
+    it past its limit."""
+    earliest: dict[int, datetime] = {}
+    for job in scheduler.get_jobs():
+        if job.next_run_time is None or not job.args:
+            continue
+        program_id = job.args[0]
+        if program_id not in earliest or job.next_run_time < earliest[program_id]:
+            earliest[program_id] = job.next_run_time
+    return {program_id: fire.isoformat() for program_id, fire in earliest.items()}
 
 
 def next_events(limit: int = 6) -> list[dict]:

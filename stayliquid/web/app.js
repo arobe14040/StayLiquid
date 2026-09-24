@@ -273,11 +273,63 @@ function fmtDuration(minutes) {
   return `${m}m`;
 }
 
+// ---- time, as it is at the lawn ---------------------------------------------
+
+// Every clock time and "today" on the page is Home Assistant's - the timezone
+// the schedule runs in - not the browser's. Viewed from another zone the page
+// would otherwise put "Next run 10:03 PM" beside a program's 9:03 PM cycle, and
+// ask the server for the wrong day's history around midnight.
+// Unset until the first status arrives, which means the browser's own zone.
+let lawnTimeZone;
+
+function setLawnTimeZone(name) {
+  if (!name || name === lawnTimeZone) return;
+  try {
+    new Intl.DateTimeFormat([], { timeZone: name });   // throws on an unknown zone
+    lawnTimeZone = name;
+  } catch {
+    console.warn(`StayLiquid: "${name}" isn't a timezone this browser knows; showing local times.`);
+  }
+}
+
+function inLawnZone(options) {
+  return lawnTimeZone ? { ...options, timeZone: lawnTimeZone } : options;
+}
+
+/** The lawn's calendar date at an instant, as "YYYY-MM-DD". */
+function lawnDate(when = Date.now()) {
+  // en-CA formats dates as YYYY-MM-DD, which is exactly the API's shape.
+  return new Intl.DateTimeFormat("en-CA", inLawnZone({ year: "numeric", month: "2-digit", day: "2-digit" }))
+    .format(new Date(when));
+}
+
+/** How far the lawn's zone is from UTC at an instant, in ms (DST-aware). */
+function lawnOffsetMs(ms) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", inLawnZone({
+      hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric",
+      hour: "numeric", minute: "numeric", second: "numeric",
+    })).formatToParts(new Date(ms)).map((p) => [p.type, Number(p.value)])
+  );
+  const wallClockAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return wallClockAsUtc - Math.floor(ms / 1000) * 1000;
+}
+
 function fmtDateTime(iso) {
   if (!iso) return "";
-  return new Date(iso).toLocaleString([], {
+  return new Date(iso).toLocaleString([], inLawnZone({
     weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  });
+  }));
+}
+
+function fmtClock(when) {
+  return when
+    ? new Date(when).toLocaleTimeString([], inLawnZone({ hour: "numeric", minute: "2-digit" }))
+    : "";
+}
+
+function isToday(when) {
+  return lawnDate(when) === lawnDate();
 }
 
 function fmtRelative(iso) {
@@ -333,13 +385,13 @@ function renderZonePanel(status) {
       const tile = document.createElement("div");
       tile.className = "zone-tile";
       tile.innerHTML = `
-        <div class="zone-tile-meta">
-          <div class="zone-tile-name">${escapeHtml(zone.name)}</div>
-          <div class="zone-tile-state"></div>
-        </div>
         <button type="button" class="switch-toggle" role="switch" aria-checked="false">
           <span class="switch-track"><span class="switch-knob"></span></span>
         </button>
+        <div class="zone-tile-meta">
+          <div class="zone-tile-name" title="${escapeHtml(zone.name)}">${escapeHtml(zone.name)}</div>
+          <div class="zone-tile-state"></div>
+        </div>
       `;
       const button = tile.querySelector(".switch-toggle");
       button.addEventListener("click", () => toggleZone(zone.id, button));
@@ -372,11 +424,14 @@ function renderZonePanel(status) {
 function toggleZone(zoneId, button) {
   const turningOn = button.getAttribute("aria-checked") !== "true";
 
-  // Flip straight away and hold that until the next poll confirms it; waiting
-  // for the round trip makes the switch feel broken.
+  // Flip straight away rather than waiting out the round trip, which makes the
+  // switch feel broken. The label changes too - left alone it contradicts the
+  // switch ("Watering" beside an off switch) until the request comes back.
+  const tile = button.closest(".zone-tile");
   button.dataset.pending = "true";
   button.setAttribute("aria-checked", String(turningOn));
-  button.closest(".zone-tile").classList.toggle("is-on", turningOn);
+  tile.classList.toggle("is-on", turningOn);
+  tile.querySelector(".zone-tile-state").textContent = turningOn ? "Starting…" : "Stopping…";
 
   guard(async () => {
     try {
@@ -386,9 +441,11 @@ function toggleZone(zoneId, button) {
         await apiPost(`api/zones/${zoneId}/stop`, {});
       }
     } finally {
+      // Repaint from the real state either way, so a failed request puts the
+      // switch back straight away instead of at the next poll.
       delete button.dataset.pending;
+      await refreshDashboard();
     }
-    await loadDashboard();
   });
 }
 
@@ -414,7 +471,7 @@ function renderPause(status) {
     banner.querySelector("#resume-btn").addEventListener("click", () =>
       guard(async () => {
         await apiDelete("api/pause");
-        await loadDashboard();
+        await refreshDashboard();
       }, "Watering resumed.")
     );
   }
@@ -423,29 +480,8 @@ function renderPause(status) {
   button.hidden = paused || !status.current_runs.length;
 }
 
-function rowItem(primary, secondary, actionsHtml) {
-  const div = document.createElement("div");
-  div.className = "row-item";
-  div.innerHTML = `
-    <div class="meta">
-      <div class="primary">${primary}</div>
-      <div class="secondary">${secondary}</div>
-    </div>
-    <div class="actions">${actionsHtml || ""}</div>
-  `;
-  return div;
-}
-
 function emptyState(container, message) {
   container.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
-}
-
-function scheduleSummary(p) {
-  const times = (p.start_times || []).map(fmt12).join(", ") || "no cycles set";
-  const cadence = p.schedule_type === "interval"
-    ? `Every ${p.interval_days} day${p.interval_days === 1 ? "" : "s"}`
-    : daysSummary(p.weekdays);
-  return `${cadence} &middot; ${escapeHtml(times)}`;
 }
 
 function daysSummary(weekdays) {
@@ -471,6 +507,28 @@ function switchTab(name) {
 
 // ---- dashboard --------------------------------------------------------------
 
+// The status poll says what's running and what's still due; what already
+// happened today comes from the run log. That doesn't change second to second,
+// so it's cached and refreshed on a slower beat than the 5s poll.
+let todayPlan = { day: null, runs: [], at: 0 };
+
+async function refreshTodayPlan(force = false) {
+  const day = todayIso();
+  if (!force && todayPlan.day === day && Date.now() - todayPlan.at < 30000) return;
+  try {
+    const history = await apiGet(`api/history?date=${day}`);
+    todayPlan = { day, runs: history.runs, at: Date.now() };
+  } catch {
+    // Leave the last plan in place - a slightly stale track beats an empty one.
+  }
+}
+
+/** After an action that changes something, don't wait out the plan's cache. */
+async function refreshDashboard() {
+  await refreshTodayPlan(true);
+  await loadDashboard();
+}
+
 async function loadDashboard() {
   let status;
   try {
@@ -479,6 +537,7 @@ async function loadDashboard() {
     return;
   }
 
+  setLawnTimeZone(status.timezone);
   if (status.version) el("app-version").textContent = `v${status.version}`;
 
   // Keeps the Zones tab's run toggles honest even while another tab is showing.
@@ -505,62 +564,224 @@ async function loadDashboard() {
       : `${runs.length} zone${runs.length === 1 ? "" : "s"} watering`;
   countPill.className = `pill ${runs.length && !paused ? "pill-on" : "pill-quiet"}`;
 
-  const runsEl = el("current-runs");
-  if (!runs.length) {
-    emptyState(runsEl, paused
-      ? "Nothing is watering - the schedule is paused."
-      : "Nothing is watering right now.");
-  } else {
-    runsEl.innerHTML = "";
-    for (const r of runs) {
-      // Count down from what the run is still owed, not from the wall clock -
-      // the clock keeps moving through a pause but the valve is shut.
-      const totalMs = r.duration_minutes * 60000;
-      const owedMs = (r.seconds_left ?? r.duration_minutes * 60) * 1000;
-      const sinceSegment = Date.now() - new Date(r.resumed_at || r.started_at).getTime();
-      const leftMs = Math.max(0, r.paused ? owedMs : owedMs - sinceSegment);
-      const pct = Math.min(100, Math.max(0, ((totalMs - leftMs) / totalMs) * 100));
-      const leftMin = Math.max(0, Math.ceil(leftMs / 60000));
+  await refreshTodayPlan();
+  renderToday(status);
+  renderTiles(status);
+}
 
-      const row = rowItem(
-        escapeHtml(r.zone_name),
-        r.paused
-          ? `${escapeHtml(r.program_name)} &middot; paused with ${leftMin}m still to run`
-          : `${escapeHtml(r.program_name)} &middot; ${leftMin}m left of ${fmtDuration(r.duration_minutes)}`,
-        r.paused
-          ? `<span class="pill pill-warn">Paused</span>`
-          : `<span class="pill pill-on">On</span>`
-      );
-      row.querySelector(".meta").insertAdjacentHTML(
-        "beforeend",
-        `<div class="progress${r.paused ? " is-paused" : ""}"><i style="width:${pct.toFixed(1)}%"></i></div>`
-      );
-      runsEl.appendChild(row);
-    }
+// ---- dashboard: the day as one track ----------------------------------------
+
+const HOUR_MS = 3600000;
+
+/**
+ * How long a run still has to go. Counted from what it's owed rather than the
+ * wall clock: the clock keeps moving through a pause but the valve is shut.
+ */
+function runMsLeft(run) {
+  const owed = (run.seconds_left ?? run.duration_minutes * 60) * 1000;
+  if (run.paused) return Math.max(0, owed);
+  const sinceSegment = Date.now() - new Date(run.resumed_at || run.started_at).getTime();
+  return Math.max(0, owed - sinceSegment);
+}
+
+function shortHour(ms) {
+  return new Date(ms).toLocaleTimeString([], inLawnZone({ hour: "numeric" }));
+}
+
+/** Round to the lawn's whole hours - not UTC's, which differ in a :30 zone. */
+function floorLawnHour(ms) {
+  const offset = lawnOffsetMs(ms);
+  return Math.floor((ms + offset) / HOUR_MS) * HOUR_MS - offset;
+}
+
+function ceilLawnHour(ms) {
+  const offset = lawnOffsetMs(ms);
+  return Math.ceil((ms + offset) / HOUR_MS) * HOUR_MS - offset;
+}
+
+/**
+ * One lane per zone. Everything before now comes from the run log, the live
+ * block from the current runs, and everything after now from the scheduler -
+ * so the track never guesses at a cycle it can already account for.
+ */
+function buildTodayLanes(status) {
+  const lanes = new Map();
+  status.zones.forEach((z) => lanes.set(z.id, { name: z.name, blocks: [] }));
+
+  const idByName = new Map(status.zones.map((z) => [z.name, z.id]));
+  const push = (zoneId, block) => {
+    const lane = lanes.get(zoneId);
+    if (lane) lane.blocks.push(block);
+  };
+
+  // Already happened. A step still running is left to the live pass below,
+  // which is the only place that knows how much of it is left.
+  todayPlan.runs.forEach((run) => {
+    run.steps.forEach((s) => {
+      if (!s.zone_name || !s.started_at || s.status === "running") return;
+      const zoneId = idByName.get(s.zone_name);
+      if (zoneId == null) return;
+      const start = new Date(s.started_at).getTime();
+      const ended = s.ended_at ? new Date(s.ended_at).getTime() : start;
+      const outcome = stepOutcome(s.status);
+      push(zoneId, {
+        start,
+        // A skip has no duration at all; give it a minute so it still shows.
+        end: Math.max(ended, start + 60000),
+        kind: outcome === "ok" ? "done" : outcome,
+        program: run.program_name,
+        note: STATUS_LABEL[s.status] || s.status,
+      });
+    });
+  });
+
+  // Watering right now - drawn out to when it will actually finish, which a
+  // pause pushes back.
+  status.current_runs.forEach((r) => {
+    push(r.zone_id, {
+      start: new Date(r.started_at).getTime(),
+      end: Date.now() + runMsLeft(r),
+      kind: r.paused ? "held" : "live",
+      program: r.program_name,
+      note: r.paused ? "paused" : "watering now",
+    });
+  });
+
+  // Still to come. The scheduler works these out in Home Assistant's timezone
+  // and knows each interval program's anchor date, so the browser just draws
+  // them - recomputing here would be an hour out for a viewer in another zone.
+  (status.planned_today || []).forEach((slot) => {
+    push(slot.zone_id, {
+      start: new Date(slot.start).getTime(),
+      end: new Date(slot.end).getTime(),
+      kind: "planned",
+      program: slot.program_name,
+      note: `scheduled, ${fmtDuration(slot.minutes)}`,
+    });
+  });
+
+  lanes.forEach((lane) => lane.blocks.sort((a, b) => a.start - b.start));
+  return [...lanes.values()];
+}
+
+function renderToday(status) {
+  const host = el("today-track");
+  const sub = el("today-sub");
+
+  if (!status.zones.length) {
+    host.innerHTML = `<div class="empty">No zones yet - add them on the Zones tab.</div>`;
+    sub.textContent = "";
+    return;
   }
 
-  const nextEl = el("next-events");
-  if (!status.next_events.length) {
-    emptyState(nextEl, "No upcoming runs. Create a program to get started.");
-  } else {
-    nextEl.innerHTML = "";
-    for (const ev of status.next_events) {
-      nextEl.appendChild(
-        rowItem(
-          escapeHtml(ev.program_name),
-          `${fmtDateTime(ev.next_run_time)} &middot; ${escapeHtml(ev.zones)}`,
-          `<span class="pill pill-quiet">${escapeHtml(fmtRelative(ev.next_run_time))}</span>`
-        )
-      );
-    }
+  const lanes = buildTodayLanes(status);
+  const blocks = lanes.flatMap((lane) => lane.blocks);
+  if (!blocks.length) {
+    const next = (status.next_events || [])[0];
+    host.innerHTML = `<div class="empty">Nothing has watered today and nothing is left to run.${
+      next ? ` Next up: ${escapeHtml(next.program_name)}, ${escapeHtml(fmtDateTime(next.next_run_time))}.` : ""
+    }</div>`;
+    sub.textContent = "";
+    return;
   }
+
+  // Round out to whole hours, and always keep the current time on the chart.
+  const now = Date.now();
+  const from = floorLawnHour(Math.min(now, ...blocks.map((b) => b.start)));
+  let to = ceilLawnHour(Math.max(now, ...blocks.map((b) => b.end)));
+  if (to - from < 4 * HOUR_MS) to = from + 4 * HOUR_MS;
+  const span = to - from;
+  const pct = (ms) => ((ms - from) / span) * 100;
+
+  const rows = lanes.map((lane) => {
+    const bars = lane.blocks.map((b) => {
+      const left = Math.max(0, pct(b.start));
+      const width = Math.max(0.7, pct(b.end) - pct(b.start));
+      const when = fmtClock(b.start);
+      return `<i class="blk blk-${b.kind}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"
+                 title="${escapeHtml(`${lane.name} · ${b.program} · ${when} · ${b.note}`)}"></i>`;
+    }).join("");
+    return `
+      <div class="track-row">
+        <span class="track-name" title="${escapeHtml(lane.name)}">${escapeHtml(lane.name)}</span>
+        <div class="track-lane">
+          ${bars}
+          <span class="track-now" style="left:${pct(now).toFixed(2)}%"></span>
+        </div>
+      </div>`;
+  }).join("");
+
+  // Thin the hour labels out rather than letting them collide on a long day.
+  const hours = Math.round(span / HOUR_MS);
+  const every = Math.ceil(hours / 8);
+  const ticks = [];
+  for (let i = 0; i <= hours; i += every) {
+    const t = from + i * HOUR_MS;
+    const edge = i === 0 ? " is-first" : i + every > hours ? " is-last" : "";
+    ticks.push(`<span class="tick${edge}" style="left:${pct(t).toFixed(2)}%">${escapeHtml(shortHour(t))}</span>`);
+  }
+
+  host.innerHTML = `
+    <div class="track-rows">${rows}</div>
+    <div class="track-axis">
+      <span></span>
+      <div class="track-axis-line">${ticks.join("")}</div>
+    </div>
+    <div class="track-key">
+      <span class="key key-done">watered</span>
+      <span class="key key-live">watering now</span>
+      <span class="key key-planned">still to come</span>
+      <span class="key key-bad">didn't water</span>
+    </div>
+  `;
+
+  const done = blocks.filter((b) => b.kind === "done").length;
+  const toCome = blocks.filter((b) => b.kind === "planned").length;
+  const bad = blocks.filter((b) => b.kind === "bad").length;
+  const cut = blocks.filter((b) => b.kind === "cut").length;
+  sub.textContent = [
+    `${done} zone run${done === 1 ? "" : "s"} done`,
+    toCome ? `${toCome} to come` : null,
+    cut ? `${cut} cut short` : null,
+    bad ? `${bad} didn't water` : null,
+    status.rain_delay.active ? "rain delay on" : null,
+  ].filter(Boolean).join(" · ");
+}
+
+function renderTiles(status) {
+  const next = (status.next_events || [])[0];
+  el("tile-next-value").textContent = next ? fmtNextRun(next.next_run_time) : "—";
+  el("tile-next-sub").textContent = next
+    ? `${next.program_name} · ${next.zone_count} zone${next.zone_count === 1 ? "" : "s"} · ${fmtRelative(next.next_run_time)}`
+    : "No programs scheduled.";
+
+  // Water today, per zone: the day's watering minutes split across the zones
+  // that ran, which is what any one zone actually received.
+  const steps = todayPlan.runs
+    .flatMap((r) => r.steps)
+    .filter((s) => s.zone_name && s.minutes > 0);
+  const zonesRun = new Set(steps.map((s) => s.zone_name));
+  const minutes = steps.reduce((total, s) => total + s.minutes, 0);
+  el("tile-water-value").textContent = zonesRun.size
+    ? fmtInches(inchesFor(minutes / zonesRun.size))
+    : "—";
+  el("tile-water-sub").textContent = zonesRun.size
+    ? `per zone, across ${zonesRun.size} zone${zonesRun.size === 1 ? "" : "s"} · ${fmtDuration(minutes)} of watering`
+    : "Nothing has watered today.";
+
+  const delay = status.rain_delay;
+  el("tile-delay-value").textContent = delay.active ? "On" : "Off";
+  el("tile-delay-sub").textContent = delay.active
+    ? `Until ${fmtDateTime(delay.until)} - scheduled programs are on hold.`
+    : "Holds every scheduled program. Manual runs still work.";
+  el("clear-delay-btn").hidden = !delay.active;
 }
 
 document.querySelectorAll("[data-delay]").forEach((btn) => {
   btn.addEventListener("click", () =>
     guard(async () => {
       await apiPost("api/raindelay", { hours: Number(btn.dataset.delay) });
-      await loadDashboard();
+      await refreshDashboard();
     }, `Rain delay set for ${btn.dataset.delay} hours.`)
   );
 });
@@ -571,21 +792,21 @@ on("apply-custom-delay", "click", () =>
     if (!hours || hours <= 0) throw new Error("Enter a number of hours.");
     await apiPost("api/raindelay", { hours });
     el("custom-delay-hours").value = "";
-    await loadDashboard();
+    await refreshDashboard();
   }, "Rain delay set.")
 );
 
 on("pause-btn", "click", () =>
   guard(async () => {
     await apiPost("api/pause", {});
-    await loadDashboard();
+    await refreshDashboard();
   }, "Watering paused - valves shut.")
 );
 
 on("clear-delay-btn", "click", () =>
   guard(async () => {
     await apiDelete("api/raindelay");
-    await loadDashboard();
+    await refreshDashboard();
   }, "Rain delay cleared.")
 );
 
@@ -617,13 +838,13 @@ async function refreshZoneStates() {
   paintZoneRunState(lastCurrentRuns);
 }
 
-/** Point each zone's run toggle at whatever is actually watering right now. */
+/** Point each zone card at whatever is actually watering right now. */
 function paintZoneRunState(currentRuns) {
   lastCurrentRuns = currentRuns || [];
   const running = new Map(lastCurrentRuns.map((r) => [r.zone_id, r]));
 
   zoneRows.forEach((refs, zoneId) => {
-    if (!refs.button.isConnected) return zoneRows.delete(zoneId);
+    if (!refs.card.isConnected) return zoneRows.delete(zoneId);
     const run = running.get(zoneId);
 
     // A run of ours just ended, which means we closed the valve - so whatever
@@ -631,37 +852,58 @@ function paintZoneRunState(currentRuns) {
     if (refs.wasRunning && !run) refs.reportedOn = false;
     refs.wasRunning = Boolean(run);
 
-    // Open if we're running it, or if HA said so when the list was drawn -
-    // somebody may have switched it on outside the add-on.
-    refs.pill.hidden = !run && !refs.reportedOn;
+    // Don't yank the switch back while its own request is still in flight.
+    if (refs.toggle.dataset.pending === "true") return;
+
+    // On if we're running it, or if HA said so - somebody may have switched it
+    // on outside the add-on.
+    const isOn = Boolean(run) || refs.reportedOn;
+    refs.toggle.setAttribute("aria-checked", String(isOn));
+    refs.toggle.setAttribute("aria-label", `${isOn ? "Stop" : "Test run"} ${refs.name}`);
+    refs.card.classList.toggle("is-on", isOn);
+    refs.minutes.disabled = isOn;
+
+    let state = refs.enabled ? "Off" : "Disabled";
+    let tone = "pill-quiet";
+    let detail = refs.idle;
 
     if (run) {
-      const endsAt = new Date(run.started_at).getTime() + run.duration_minutes * 60000;
-      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 60000));
-      refs.button.dataset.running = "true";
-      refs.button.textContent = `Stop · ${left}m left`;
-      refs.button.classList.add("btn-running");
-      refs.button.setAttribute("aria-pressed", "true");
-      refs.button.setAttribute("aria-label", `Stop ${refs.name}`);
-      refs.minutes.disabled = true;
-    } else {
-      refs.button.dataset.running = "false";
-      refs.button.textContent = "Test run";
-      refs.button.classList.remove("btn-running");
-      refs.button.setAttribute("aria-pressed", "false");
-      refs.button.setAttribute("aria-label", `Test run ${refs.name}`);
-      refs.minutes.disabled = false;
+      const left = Math.ceil(runMsLeft(run) / 60000);
+      state = run.paused ? "Paused" : "Watering";
+      tone = run.paused ? "pill-warn" : "pill-on";
+      detail = run.paused
+        ? `${run.program_name} · held with ${left}m still to run`
+        : `${left}m left of ${fmtDuration(run.duration_minutes)} · ${run.program_name}`;
+    } else if (refs.reportedOn) {
+      state = "On";
+      tone = "pill-on";
+      detail = "Opened outside the add-on";
     }
+
+    refs.pill.textContent = state;
+    refs.pill.className = `pill ${tone} zone-card-state`;
+    refs.detail.textContent = detail;
   });
 }
 
+const PENCIL_SVG = `
+  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
+    <path d="M14 6l4 4" />
+  </svg>`;
+
 async function loadZonesTab() {
-  const [zones, entities, status] = await Promise.all([
+  const [zones, entities, status, history] = await Promise.all([
     apiGet("api/zones"),
     apiGet("api/ha/entities"),
     apiGet("api/status"),
+    // Only used to say what a zone last did, so a failure here shouldn't take
+    // the whole tab down with it.
+    apiGet(`api/history?date=${todayIso()}`).catch(() => ({ runs: [] })),
   ]);
   zonesCache = zones;
+  setLawnTimeZone(status.timezone);
   zoneRows.clear();
 
   const stateByEntity = Object.fromEntries(entities.map((e) => [e.entity_id, e.state]));
@@ -674,59 +916,125 @@ async function loadZonesTab() {
         .join("")
     : `<option value="">No unassigned switch or valve entities found</option>`;
 
+  // The last thing each zone did today, so an idle card says more than "Off".
+  const lastToday = new Map();
+  history.runs.forEach((run) => {
+    run.steps.forEach((s) => {
+      if (!s.zone_name || !s.started_at) return;
+      const seen = lastToday.get(s.zone_name);
+      if (!seen || s.started_at > seen.started_at) lastToday.set(s.zone_name, s);
+    });
+  });
+
+  const openCount = zones.filter((z) => stateByEntity[z.entity_id] === "on").length;
+  el("zones-sub").textContent = zones.length
+    ? `${zones.length} circuit${zones.length === 1 ? "" : "s"}${openCount ? ` · ${openCount} open` : ""}`
+    : "";
+
   const list = el("zones-list");
   if (!zones.length) {
-    emptyState(list, "No zones yet. Add your first sprinkler circuit above.");
+    emptyState(list, "No zones yet. Add your first sprinkler circuit.");
     return;
   }
 
   list.innerHTML = "";
   zones.forEach((z) => {
-    const row = rowItem(
-      `${escapeHtml(z.name)} ${z.enabled ? "" : `<span class="pill pill-quiet">Disabled</span>`}`,
-      escapeHtml(z.entity_id),
-      `
-        <span class="pill pill-on zone-on-pill" ${stateByEntity[z.entity_id] === "on" ? "" : "hidden"}>On</span>
-        <button class="btn btn-icon rename-zone" title="Rename zone" aria-label="Rename ${escapeHtml(z.name)}">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
-            <path d="M14 6l4 4" />
-          </svg>
+    const last = lastToday.get(z.name);
+    const idle = !z.enabled
+      ? "Programs skip this zone while it's disabled"
+      : last
+        ? [
+            `Last run ${fmtClock(last.started_at)}`,
+            // A run stopped straight away would otherwise read "0m".
+            last.minutes >= 1 ? fmtDuration(last.minutes) : null,
+            stepOutcome(last.status) === "ok" ? null : STATUS_LABEL[last.status] || last.status,
+          ].filter(Boolean).join(" · ")
+        : "No runs today";
+
+    const card = document.createElement("article");
+    card.className = "zone-card";
+    card.innerHTML = `
+      <div class="zone-card-head">
+        <div class="zone-card-id">
+          <div class="zone-card-title">
+            <h3>${escapeHtml(z.name)}</h3>
+            <button class="btn btn-icon rename-zone" title="Rename zone"
+                    aria-label="Rename ${escapeHtml(z.name)}">${PENCIL_SVG}</button>
+          </div>
+          <div class="zone-card-entity">${escapeHtml(z.entity_id)}</div>
+        </div>
+        <button type="button" class="switch-toggle" role="switch" aria-checked="false"
+                aria-label="Test run ${escapeHtml(z.name)}">
+          <span class="switch-track"><span class="switch-knob"></span></span>
         </button>
-        <input type="number" class="run-minutes" value="5" min="0.5" step="0.5" style="width:70px" />
-        <button class="btn btn-small run-zone" aria-pressed="false">Test run</button>
+      </div>
+      <div class="zone-card-status">
+        <span class="pill pill-quiet zone-card-state">Off</span>
+        <span class="zone-card-detail"></span>
+      </div>
+      <div class="zone-card-actions">
+        <label class="run-for">
+          <span class="inline-label">Run for</span>
+          <input type="number" class="run-minutes" value="5" min="0.5" step="0.5"
+                 aria-label="Minutes to run ${escapeHtml(z.name)} for" />
+          <span class="inline-label">min</span>
+        </label>
         <button class="btn btn-small toggle-zone">${z.enabled ? "Disable" : "Enable"}</button>
         <button class="btn btn-small btn-danger delete-zone">Delete</button>
-      `
-    );
-    const runBtn = row.querySelector(".run-zone");
-    const minutesInput = row.querySelector(".run-minutes");
+      </div>
+    `;
+
+    const toggle = card.querySelector(".switch-toggle");
+    const minutes = card.querySelector(".run-minutes");
     zoneRows.set(z.id, {
-      button: runBtn,
-      minutes: minutesInput,
-      pill: row.querySelector(".zone-on-pill"),
+      card,
+      toggle,
+      minutes,
+      pill: card.querySelector(".zone-card-state"),
+      detail: card.querySelector(".zone-card-detail"),
       name: z.name,
+      enabled: Boolean(z.enabled),
       entityId: z.entity_id,
+      idle,
       reportedOn: stateByEntity[z.entity_id] === "on",
     });
 
-    runBtn.addEventListener("click", () =>
+    // On runs the zone for the minutes in the box; off stops it there and then.
+    toggle.addEventListener("click", () => {
+      const turningOn = toggle.getAttribute("aria-checked") !== "true";
+      const mins = Number(minutes.value);
+      if (turningOn && (!mins || mins <= 0)) {
+        return toast("Set how many minutes to run for.", "error");
+      }
+
+      // Flip straight away and hold that until the next poll confirms it;
+      // waiting for the round trip makes the switch feel broken.
+      toggle.dataset.pending = "true";
+      toggle.setAttribute("aria-checked", String(turningOn));
+      card.classList.toggle("is-on", turningOn);
+      const refs = zoneRows.get(z.id);
+      refs.pill.textContent = turningOn ? "Starting…" : "Stopping…";
+      refs.pill.className = "pill pill-quiet zone-card-state";
+
       guard(async () => {
-        if (runBtn.dataset.running === "true") {
-          await apiPost(`api/zones/${z.id}/stop`, {});
-          toast(`${z.name} stopped.`);
-        } else {
-          const minutes = Number(minutesInput.value);
-          if (!minutes || minutes <= 0) throw new Error("Set how many minutes to run for.");
-          await apiPost(`api/zones/${z.id}/run`, { minutes });
-          toast(`${z.name} running for ${fmtDuration(minutes)}.`);
+        try {
+          if (turningOn) {
+            await apiPost(`api/zones/${z.id}/run`, { minutes: mins });
+            toast(`${z.name} running for ${fmtDuration(mins)}.`);
+          } else {
+            await apiPost(`api/zones/${z.id}/stop`, {});
+            toast(`${z.name} stopped.`);
+          }
+        } finally {
+          // Repaint from the real state either way, so a failed request puts
+          // the switch back straight away instead of at the next poll.
+          delete toggle.dataset.pending;
+          await refreshDashboard();
         }
-        // Reflect the change straight away instead of waiting for the poll.
-        await loadDashboard();
-      })
-    );
-    row.querySelector(".rename-zone").addEventListener("click", () =>
+      });
+    });
+
+    card.querySelector(".rename-zone").addEventListener("click", () =>
       guard(async () => {
         const name = await askText({
           title: "Rename zone",
@@ -740,13 +1048,13 @@ async function loadZonesTab() {
         toast(`Renamed to ${name}.`);
       })
     );
-    row.querySelector(".toggle-zone").addEventListener("click", () =>
+    card.querySelector(".toggle-zone").addEventListener("click", () =>
       guard(async () => {
         await apiPut(`api/zones/${z.id}`, { enabled: !z.enabled });
         await loadZonesTab();
       })
     );
-    row.querySelector(".delete-zone").addEventListener("click", () =>
+    card.querySelector(".delete-zone").addEventListener("click", () =>
       guard(async () => {
         const go = await askConfirm({
           title: `Delete ${z.name}?`,
@@ -759,11 +1067,23 @@ async function loadZonesTab() {
         await loadZonesTab();
       })
     );
-    list.appendChild(row);
+    list.appendChild(card);
   });
 
   paintZoneRunState(status.current_runs);
 }
+
+function showAddZone(show) {
+  el("add-zone-card").hidden = !show;
+  el("show-add-zone").hidden = show;
+  if (show) el("new-zone-entity").focus();
+}
+
+on("show-add-zone", "click", () => showAddZone(true));
+on("cancel-add-zone", "click", () => {
+  el("new-zone-name").value = "";
+  showAddZone(false);
+});
 
 on("add-zone-btn", "click", () =>
   guard(async () => {
@@ -773,6 +1093,7 @@ on("add-zone-btn", "click", () =>
     if (!name) throw new Error("Give the zone a name.");
     await apiPost("api/zones", { entity_id: entityId, name });
     el("new-zone-name").value = "";
+    showAddZone(false);
     await loadZonesTab();
   }, "Zone added.")
 );
@@ -780,13 +1101,15 @@ on("add-zone-btn", "click", () =>
 // ---- programs tab -----------------------------------------------------------
 
 async function loadProgramsTab() {
-  const [presets, programs, zones] = await Promise.all([
+  const [presets, programs, zones, status] = await Promise.all([
     apiGet("api/presets"),
     apiGet("api/programs"),
     apiGet("api/zones"),
+    apiGet("api/status"),   // for the lawn's timezone, which next-run times are shown in
   ]);
   presetsCache = presets;
   zonesCache = zones;
+  setLawnTimeZone(status.timezone);
 
   renderPresetGallery();
   renderProgramsList(programs);
@@ -1443,8 +1766,40 @@ function fillBuilderFrom(p) {
   renderBuilder();
 }
 
+/**
+ * "Stage 1 · Before Germination" when the program came from a preset, or null
+ * when its name already says so - the preset's default name is exactly that,
+ * and repeating it above itself is noise.
+ */
+function stageLabelFor(program) {
+  const preset = presetsCache.find((p) => p.id === program.stage);
+  if (!preset) return !program.stage || program.stage === "custom" ? "Custom" : program.stage;
+  if (program.name.toLowerCase().startsWith(`stage ${preset.stage}`)) return null;
+  return `Stage ${preset.stage} · ${preset.name}`;
+}
+
+function weekStrip(weekdays) {
+  const active = new Set((weekdays || "").split(",").filter(Boolean));
+  const days = DAYS.map((d) =>
+    `<span class="week-day${active.has(d) ? " is-on" : ""}">${DAY_LABEL[d][0]}</span>`
+  ).join("");
+  return `<div class="week-strip" role="img"
+               aria-label="${escapeHtml(daysSummary(weekdays))}">${days}</div>`;
+}
+
+function fmtNextRun(iso) {
+  return isToday(iso)
+    ? fmtClock(iso)
+    : new Date(iso).toLocaleString([], inLawnZone({ weekday: "short", hour: "numeric", minute: "2-digit" }));
+}
+
 function renderProgramsList(programs) {
   const list = el("programs-list");
+  const running = programs.filter((p) => p.enabled).length;
+  el("programs-sub").textContent = programs.length
+    ? `${running} enabled · ${programs.length - running} off`
+    : "";
+
   if (!programs.length) {
     emptyState(list, 'No programs yet. Hit "New program" to build your first one.');
     return;
@@ -1457,20 +1812,57 @@ function renderProgramsList(programs) {
     const runtime = p.run_mode === "simultaneous"
       ? Math.max(0, ...p.zones.map((z) => z.duration_minutes))
       : perCycle;
-    const row = rowItem(
-      `${escapeHtml(p.name)} ${p.enabled ? "" : `<span class="pill pill-quiet">Disabled</span>`}`,
-      `${scheduleSummary(p)}<br />${zoneCount} zone${zoneCount === 1 ? "" : "s"} &middot; ${fmtDuration(runtime)} per cycle &middot; ${p.run_mode === "simultaneous" ? "all together" : "one at a time"}`,
-      `
-        <button class="btn btn-small run-now">Run now</button>
-        <button class="btn btn-small toggle-program">${p.enabled ? "Disable" : "Enable"}</button>
-        <button class="btn btn-small edit-program">Edit</button>
-        <button class="btn btn-small btn-danger delete-program">Delete</button>
-      `
-    );
+    const runtimes = new Set(p.zones.map((z) => z.duration_minutes));
+    const next = p.next_run_time;
+    const stage = stageLabelFor(p);
+
+    const row = document.createElement("article");
+    row.className = `program-card${p.enabled ? "" : " is-off"}`;
+    row.innerHTML = `
+      <div class="program-head">
+        <div class="program-id">
+          ${stage ? `<div class="program-stage">${escapeHtml(stage)}</div>` : ""}
+          <div class="program-title">
+            <h3>${escapeHtml(p.name)}</h3>
+            <span class="pill ${p.enabled ? "pill-on" : "pill-quiet"}">${p.enabled ? "Enabled" : "Disabled"}</span>
+          </div>
+          <div class="program-detail">${
+            zoneCount ? `${zoneCount} zone${zoneCount === 1 ? "" : "s"}` : "no zones"
+          } &middot; ${
+            runtimes.size === 1 ? `${[...runtimes][0]} min each` : "mixed runtimes"
+          } &middot; ${
+            p.run_mode === "simultaneous" ? "all together" : "one at a time"
+          } &middot; ${escapeHtml(fmtDuration(runtime))} per cycle</div>
+        </div>
+        <div class="program-next">
+          <div class="tile-label">Next run</div>
+          <div class="program-next-time">${next ? escapeHtml(fmtNextRun(next)) : "&mdash;"}</div>
+          <div class="tile-sub">${
+            next ? escapeHtml(fmtRelative(next)) : p.enabled ? "not scheduled" : "off while disabled"
+          }</div>
+        </div>
+      </div>
+
+      <div class="program-foot">
+        ${p.schedule_type === "interval"
+          ? `<span class="chip chip-cadence">Every ${p.interval_days} day${p.interval_days === 1 ? "" : "s"}</span>`
+          : weekStrip(p.weekdays)}
+        <div class="cycle-chips">${
+          (p.start_times || []).map((t) => `<span class="chip">${escapeHtml(fmt12(t))}</span>`).join("")
+            || `<span class="chip chip-empty">no cycles set</span>`
+        }</div>
+        <div class="program-actions">
+          <button class="btn btn-small run-now">Run now</button>
+          <button class="btn btn-small edit-program">Edit</button>
+          <button class="btn btn-small toggle-program">${p.enabled ? "Disable" : "Enable"}</button>
+          <button class="btn btn-small btn-danger delete-program">Delete</button>
+        </div>
+      </div>
+    `;
     row.querySelector(".run-now").addEventListener("click", () =>
       guard(async () => {
         await apiPost(`api/programs/${p.id}/run_now`, {});
-        await loadDashboard();
+        await refreshDashboard();
         switchTab("dashboard");
       }, `${p.name} started.`)
     );
@@ -1502,9 +1894,9 @@ function renderProgramsList(programs) {
 
 let historyDay = null;   // YYYY-MM-DD currently shown; null means "today"
 
+/** Today where the lawn is - the day the history API takes as "today". */
 function todayIso() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return lawnDate();
 }
 
 function shiftDay(iso, days) {
@@ -1513,15 +1905,19 @@ function shiftDay(iso, days) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+let historyTimezone = "";
+
 async function loadHistoryTab() {
   historyDay = historyDay || todayIso();
   const [stats, day] = await Promise.all([
+    // Not scoped to the day: something that failed three weeks ago and was
+    // never looked at is exactly what the panel at the top is for.
     apiGet("api/history/stats?days=14"),
     apiGet(`api/history?date=${historyDay}`),
   ]);
+  historyTimezone = stats.timezone || "";
+  setLawnTimeZone(stats.timezone);
   renderAttention(stats);
-  renderHistoryStats(stats);
-  renderActivityChart(stats);
   renderDayPicker();
   renderRuns(day.runs);
 }
@@ -1542,12 +1938,18 @@ function renderDayPicker() {
   el("day-next").disabled = historyDay >= today;
   el("day-today").hidden = historyDay === today;
 
-  const label = historyDay === today
-    ? "Runs today"
+  el("history-day-title").textContent = historyDay === today
+    ? "Today"
     : historyDay === shiftDay(today, -1)
-      ? "Runs yesterday"
-      : `Runs on ${fmtShortDate(historyDay)}`;
-  el("history-day-title").textContent = label;
+      ? "Yesterday"
+      : fmtLongDate(historyDay);
+}
+
+function fmtLongDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], {
+    weekday: "long", month: "long", day: "numeric",
+  });
 }
 
 function renderAttention(stats) {
@@ -1558,48 +1960,64 @@ function renderAttention(stats) {
     return;
   }
 
+  // The list is only the latest few; the total is how many are outstanding.
+  const total = Math.max(stats.attention_total ?? items.length, items.length);
+
   // Errors mean something went wrong; a skip is usually deliberate (rain delay).
   const hasError = items.some((r) => r.status === "error" || r.status === "interrupted");
-  const rows = items
-    .map((r) => {
-      const label = STATUS_LABEL[r.status] || r.status;
-      // A whole-program skip has no zone, so the program name is already the title.
-      const detail = r.zone_name
-        ? `${escapeHtml(r.program_name || "Manual")} &middot; ${fmtDateTime(r.started_at)}`
-        : `Whole program &middot; ${fmtDateTime(r.started_at)}`;
-      return `<div class="row-item">
-        <div class="meta">
-          <div class="primary">${escapeHtml(r.zone_name || r.program_name || "Run")}</div>
-          <div class="secondary">${detail}</div>
-        </div>
-        <div class="actions">
-          <span class="pill ${STATUS_PILL[r.status] || "pill-quiet"}">${escapeHtml(label)}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
+  const row = (r) => {
+    const label = STATUS_LABEL[r.status] || r.status;
+    // A whole-program skip has no zone, so the program name is already the title.
+    const detail = r.zone_name
+      ? `${escapeHtml(r.program_name || "Manual")} &middot; ${fmtDateTime(r.started_at)}`
+      : `Whole program &middot; ${fmtDateTime(r.started_at)}`;
+    return `<div class="row-item">
+      <div class="meta">
+        <div class="primary">${escapeHtml(r.zone_name || r.program_name || "Run")}</div>
+        <div class="secondary">${detail}</div>
+      </div>
+      <div class="actions">
+        <span class="pill ${STATUS_PILL[r.status] || "pill-quiet"}">${escapeHtml(label)}</span>
+      </div>
+    </div>`;
+  };
 
+  // The latest few up front and the rest folded away: a long backlog here
+  // otherwise pushes the day's timeline - the point of the tab - off screen.
+  const SHOWN = 3;
+  const hidden = items.slice(SHOWN);
+  const more = total - SHOWN;
   host.innerHTML = `
     <div class="attention ${hasError ? "" : "is-warning"}">
       <div class="attention-head">
         <span class="attention-icon" aria-hidden="true">${hasError ? "&#9888;" : "&#9208;"}</span>
-        <h2>${items.length} run${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} a look</h2>
-        <button class="btn btn-small" id="dismiss-attention">Mark as seen</button>
+        <h2>${total} run${total === 1 ? "" : "s"} need${total === 1 ? "s" : ""} a look</h2>
+        <button class="btn btn-small" id="dismiss-attention">${total > 1 ? "Mark all as seen" : "Mark as seen"}</button>
       </div>
       <p class="hint">
         ${hasError
           ? "A zone failed or was cut short. Check the valve and the add-on log."
           : "These runs were skipped on purpose - no water went out."}
       </p>
-      <div class="stack">${rows}</div>
+      <div class="stack">${items.slice(0, SHOWN).map(row).join("")}</div>
+      ${more > 0 ? `
+        <details class="attention-more">
+          <summary>Show ${more} more</summary>
+          <div class="stack">${hidden.map(row).join("")}</div>
+          ${total > items.length
+            ? `<p class="hint">…and ${total - items.length} older. Marking all as seen clears those too.</p>`
+            : ""}
+        </details>` : ""}
     </div>
   `;
 
   host.querySelector("#dismiss-attention").addEventListener("click", () =>
     guard(async () => {
-      // Clears the flag only - the runs stay in the history either way.
+      // Clears the flag only - the runs stay in the history either way. Name
+      // the runs when every one is on screen; when some aren't, "all" has to
+      // mean all, not just the ones that happened to be loaded.
       const { cleared } = await apiPost("api/history/acknowledge", {
-        run_ids: items.map((r) => r.id),
+        run_ids: total > items.length ? null : items.map((r) => r.id),
       });
       await loadHistoryTab();
       toast(`${cleared} run${cleared === 1 ? "" : "s"} marked as seen.`);
@@ -1607,101 +2025,6 @@ function renderAttention(stats) {
   );
 }
 
-function renderHistoryStats(stats) {
-  const t = stats.totals;
-  el("history-timezone").textContent = stats.timezone;
-  el("history-stats").innerHTML = `
-    <div class="stat">
-      <div class="label">Water applied</div>
-      <div class="value">${fmtInches(t.inches)}</div>
-      <div class="sub">estimated, per zone</div>
-    </div>
-    <div class="stat">
-      <div class="label">Time watering</div>
-      <div class="value">${escapeHtml(fmtDuration(t.minutes))}</div>
-      <div class="sub">${t.zones} zone${t.zones === 1 ? "" : "s"} involved</div>
-    </div>
-    <div class="stat">
-      <div class="label">Runs completed</div>
-      <div class="value">${t.runs}</div>
-      <div class="sub">across ${stats.days} days</div>
-    </div>
-    <div class="stat${t.problems ? " stat-problem" : ""}">
-      <div class="label">Needs a look</div>
-      <div class="value">${t.problems}</div>
-      <div class="sub">${t.errors} error${t.errors === 1 ? "" : "s"}, ${t.skipped} skipped</div>
-    </div>
-  `;
-}
-
-function renderActivityChart(stats) {
-  const plot = el("chart-plot");
-  const days = stats.by_day;
-  const max = Math.max(...days.map((d) => d.minutes), 1);
-  const hasAny = days.some((d) => d.minutes > 0 || d.problems > 0);
-
-  if (!hasAny) {
-    plot.innerHTML = `<div class="timeline-empty">Nothing watered in the last ${stats.days} days.</div>`;
-    return;
-  }
-
-  const bars = days
-    .map((d) => {
-      const height = d.minutes > 0 ? Math.max(2, (d.minutes / max) * 100) : 2;
-      const flag = d.problems ? `<span class="chart-flag" aria-hidden="true"></span>` : "";
-      return `<div class="chart-col${d.minutes ? "" : " is-empty"}">
-        <div class="chart-bar" style="height:${height.toFixed(1)}%">${flag}</div>
-      </div>`;
-    })
-    .join("");
-
-  el("chart-peak").textContent = `peak ${fmtDuration(max)}`;
-  plot.innerHTML = `
-    <div class="chart-grid"><span style="top:0"></span><span style="top:50%"></span><span style="bottom:0"></span></div>
-    <div class="chart-bars">${bars}</div>
-    <div class="chart-axis">${days.map((d) => `<span>${d.day_of_month}</span>`).join("")}</div>
-    <div class="chart-tip" hidden></div>
-  `;
-
-  const tip = plot.querySelector(".chart-tip");
-  plot.querySelectorAll(".chart-col").forEach((col, i) => {
-    const d = days[i];
-    col.addEventListener("mouseenter", () => {
-      tip.innerHTML = `
-        <div class="tip-day">${escapeHtml(d.weekday)}, ${escapeHtml(fmtShortDate(d.date))}</div>
-        <div class="tip-row">${escapeHtml(fmtDuration(d.minutes))} &middot; ${d.runs} run${d.runs === 1 ? "" : "s"}</div>
-        ${d.problems ? `<div class="tip-problem">${d.problems} need${d.problems === 1 ? "s" : ""} a look</div>` : ""}
-      `;
-      tip.hidden = false;
-
-      // Anchor above the bar, but keep the whole tooltip inside the plot so a
-      // full-height bar doesn't push it over the caption or off the edge.
-      const bar = col.querySelector(".chart-bar").getBoundingClientRect();
-      const host = plot.getBoundingClientRect();
-      const half = tip.offsetWidth / 2;
-      const left = bar.left - host.left + bar.width / 2;
-      tip.style.left = `${Math.min(Math.max(left, half), host.width - half)}px`;
-      tip.style.top = `${Math.max(bar.top - host.top - 8, tip.offsetHeight + 2)}px`;
-    });
-    col.addEventListener("mouseleave", () => { tip.hidden = true; });
-
-    // The chart is the obvious place to spot a bad day, so let it open one.
-    col.classList.add("is-clickable");
-    col.setAttribute("role", "button");
-    col.setAttribute("tabindex", "0");
-    col.setAttribute("aria-label", `Show runs for ${d.weekday}, ${fmtShortDate(d.date)}`);
-    const open = () => guard(() => showDay(d.date));
-    col.addEventListener("click", open);
-    col.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-    });
-  });
-}
-
-function fmtShortDate(iso) {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString([], { month: "short", day: "numeric" });
-}
 
 // Three outcomes, not two: a zone that watered, one deliberately cut short, and
 // one that failed. Lumping the middle in with either misreads what happened.
@@ -1713,17 +2036,25 @@ function stepOutcome(status) {
   return STEP_CUT_SHORT.has(status) ? "cut" : "bad";
 }
 
-function fmtClock(iso) {
-  return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
-}
+// Matches PROBLEM_STATUSES in app/api/routes_status.py - the ones the
+// "needs a look" panel counts, and so the ones worth offering to clear.
+const PROBLEM_STATUSES = new Set(["error", "interrupted", "skipped_rain_delay", "skipped_unavailable"]);
+
+// The subset that means something went wrong, as opposed to a run that was
+// held back on purpose (a rain delay) - only these are painted red.
+const FAILURE_STATUSES = new Set(["error", "interrupted", "skipped_unavailable"]);
 
 /**
- * One card per program execution, with its zones as numbered steps. The point
- * is being able to see at a glance that steps 1-2 watered and 3-4 didn't,
- * instead of reading four separate rows and working out they belonged together.
+ * The day as a timeline: time down the left, one event per program execution,
+ * each opened out into the zones it ran. The point is being able to see at a
+ * glance that steps 1-2 watered and 3-4 didn't, instead of reading four
+ * separate rows and working out they belonged together.
  */
 function renderRuns(runs) {
   const list = el("history-list");
+
+  renderDaySummary(runs);
+
   if (!runs.length) {
     emptyState(list, "Nothing ran on this day.");
     return;
@@ -1731,70 +2062,129 @@ function renderRuns(runs) {
 
   list.innerHTML = "";
   runs.forEach((run) => {
-    const failed = run.problem_count > 0;
-    const card = document.createElement("div");
-    card.className = `run-card${failed ? " has-problem" : ""}`;
+    // Red for something that went wrong; amber for a zone that didn't finish
+    // for a reason that isn't a fault, like a rain delay or someone stopping it.
+    const failed = run.steps.some((s) => FAILURE_STATUSES.has(s.status));
+    const partial = !failed && run.unfinished_count > 0;
 
-    const when = fmtClock(run.started_at);
-    const source = run.trigger_source === "manual" ? "started by hand" : "scheduled";
+    // A zone run by hand is a single step with no number - it reads as that
+    // zone, not as a program called "Manual run" with one anonymous step.
+    // Older rows have no step number; newer manual runs are "step 1" of no
+    // program. Either way it's one zone on its own.
+    const solo = run.steps.length === 1 && Boolean(run.steps[0].zone_name)
+      && (run.steps[0].step == null || run.program_id == null);
+    const title = solo ? run.steps[0].zone_name : run.program_name;
 
-    const cutShort = run.unfinished_count - run.problem_count;
     let summary;
     if (run.whole_program) {
       summary = STATUS_LABEL[run.steps[0].status] || run.steps[0].status;
+    } else if (solo) {
+      summary = failed ? "Failed" : partial ? STATUS_LABEL[run.steps[0].status] || "Didn't finish" : "Completed";
     } else if (failed) {
-      summary = `${run.problem_count} of ${run.steps.length} didn't water`;
-    } else if (cutShort) {
-      summary = `${cutShort} of ${run.steps.length} cut short`;
+      const first = run.steps.find((s) => FAILURE_STATUSES.has(s.status));
+      summary = first?.step ? `Failed at step ${first.step}` : "Failed";
+    } else if (partial) {
+      summary = `${run.unfinished_count} of ${run.steps.length} didn't finish`;
     } else {
-      summary = `all ${run.steps.length} zone${run.steps.length === 1 ? "" : "s"} watered`;
+      summary = run.steps.length === 1 ? "Completed" : `All ${run.steps.length} zones watered`;
     }
 
-    card.innerHTML = `
-      <div class="run-head">
-        <div>
-          <div class="run-name">${escapeHtml(run.program_name)}</div>
-          <div class="run-meta">${escapeHtml(when)} &middot; ${source}${
-            run.minutes ? ` &middot; ${fmtDuration(run.minutes)} of watering` : ""
-          }</div>
+    // Hundredths of an inch is the precision the estimate has; a run that
+    // gave less than that reads better with no figure than with ".00".
+    const inches = inchesFor(perZoneMinutes(run));
+
+    const event = document.createElement("div");
+    event.className = `run-event${failed ? " has-problem" : partial ? " is-partial" : ""}`;
+    event.innerHTML = `
+      <div class="run-when">
+        <div class="run-time">${escapeHtml(fmtClock(run.started_at))}</div>
+        <div class="run-dur">${run.minutes >= 1 ? escapeHtml(fmtDuration(run.minutes)) : ""}</div>
+      </div>
+      <div class="run-rail"><span class="run-dot"></span></div>
+      <div class="run-card">
+        <div class="run-head">
+          <div class="run-name">${escapeHtml(title)}</div>
+          <span class="pill ${failed ? "pill-danger" : partial ? "pill-warn" : "pill-quiet"}">${escapeHtml(summary)}</span>
+          <span class="run-water">${inches >= 0.01 ? `${escapeHtml(fmtInches(inches))} per zone` : ""}</span>
         </div>
-        <span class="pill ${failed ? "pill-danger" : cutShort ? "pill-warn" : "pill-quiet"}">${escapeHtml(summary)}</span>
+        <div class="run-sub">${
+          solo ? "Run by hand" : run.trigger_source === "manual" ? "Started by hand" : "Scheduled"
+        }${run.ended_at ? ` &middot; finished ${escapeHtml(fmtClock(run.ended_at))}` : ""}</div>
       </div>
     `;
 
-    if (!run.whole_program) {
-      const marks = { ok: "&check;", cut: "&ndash;", bad: "&times;" };
+    const card = event.querySelector(".run-card");
+
+    // Say what went wrong in words, right where it happened, and let it be
+    // cleared from here rather than only from the panel at the top.
+    const problems = run.steps.filter((s) => stepOutcome(s.status) !== "ok");
+    const lines = problems
+      .map((s) => {
+        const label = STATUS_LABEL[s.status] || s.status;
+        if (solo || run.whole_program) return label;
+        return `${s.step ? `Step ${s.step} · ` : ""}${s.zone_name || "Zone"}: ${label}`;
+      })
+      .join(". ");
+    const clearable = problems.filter((s) => PROBLEM_STATUSES.has(s.status) && !s.acknowledged);
+    // Skip the note when the pill already says exactly this and there's
+    // nothing to acknowledge - "Stopped early" twice is just noise.
+    if (problems.length && (lines !== summary || clearable.length)) {
+      card.insertAdjacentHTML("beforeend", `
+        <div class="run-problem${failed ? " is-failure" : ""}">
+          <span>${escapeHtml(lines)}.</span>
+          ${clearable.length ? `<button class="btn btn-small ack-run">Acknowledge</button>` : ""}
+        </div>
+      `);
+      card.querySelector(".ack-run")?.addEventListener("click", () =>
+        guard(async () => {
+          await apiPost("api/history/acknowledge", { run_ids: clearable.map((s) => s.id) });
+          await loadHistoryTab();
+        }, "Marked as seen.")
+      );
+    }
+
+    // One zone has nothing to lay out - the title and the note above say it all.
+    if (!run.whole_program && !solo) {
       const steps = run.steps
         .map((s) => {
           const outcome = stepOutcome(s.status);
           const label = STATUS_LABEL[s.status] || s.status;
+          const detail = outcome === "ok"
+            ? s.minutes ? fmtDuration(s.minutes) : "—"
+            : label;
           return `<li class="run-step run-step-${outcome}"
                       title="${escapeHtml(`${s.zone_name || "Zone"} - ${label}`)}">
-            <span class="run-step-n">${s.step ?? "&bull;"}</span>
+            <span class="run-step-n">${s.step ? `Step ${s.step}` : "Zone"}</span>
             <span class="run-step-zone">${escapeHtml(s.zone_name || "Zone")}</span>
-            <span class="run-step-mark" aria-hidden="true">${marks[outcome]}</span>
-            <span class="sr-only">${escapeHtml(label)}</span>
+            <span class="run-step-detail">${escapeHtml(detail)}</span>
           </li>`;
         })
         .join("");
-      card.insertAdjacentHTML("beforeend", `<ol class="step-strip">${steps}</ol>`);
+      card.insertAdjacentHTML("beforeend", `<ol class="run-steps">${steps}</ol>`);
     }
 
-    // Spell the failures out underneath; the strip says which, not why.
-    const problems = run.steps.filter((s) => stepOutcome(s.status) !== "ok");
-    if (problems.length) {
-      const lines = problems
-        .map((s) => `<li><strong>${
-          s.step ? `Step ${s.step}` : "This run"
-        }${s.zone_name ? ` &middot; ${escapeHtml(s.zone_name)}` : ""}</strong> - ${
-          escapeHtml(STATUS_LABEL[s.status] || s.status)
-        }</li>`)
-        .join("");
-      card.insertAdjacentHTML("beforeend", `<ul class="run-problems">${lines}</ul>`);
-    }
-
-    list.appendChild(card);
+    list.appendChild(event);
   });
+}
+
+/** What a single zone got out of this run, which is what an inch figure means. */
+function perZoneMinutes(run) {
+  const zones = new Set(run.steps.filter((s) => s.zone_name).map((s) => s.zone_name));
+  return zones.size ? run.minutes / zones.size : run.minutes;
+}
+
+function renderDaySummary(runs) {
+  const problems = runs.flatMap((r) => r.steps).filter((s) => FAILURE_STATUSES.has(s.status)).length;
+  const minutes = runs.reduce((total, r) => total + r.minutes, 0);
+  const zones = new Set(
+    runs.flatMap((r) => r.steps).filter((s) => s.zone_name && s.minutes > 0).map((s) => s.zone_name)
+  );
+  el("history-day-sub").textContent = [
+    `${runs.length} run${runs.length === 1 ? "" : "s"}`,
+    zones.size ? `${fmtInches(inchesFor(minutes / zones.size))} per zone` : null,
+    problems ? `${problems} failure${problems === 1 ? "" : "s"}` : null,
+    historyTimezone,
+  ].filter(Boolean).join(" · ");
 }
 
 // Remember whether the zone panel was left open. localStorage can throw in a

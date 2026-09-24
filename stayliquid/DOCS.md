@@ -3,30 +3,37 @@
 ## What it does
 
 - **Zones** - wrap any `switch.*` or `valve.*` entity that controls a
-  sprinkler valve as a named zone. The pencil next to a zone renames it;
-  programs using it follow the new name straight away. **Test run** is a
-  toggle - it opens the valve for the minutes beside it and counts down, and
-  pressing it again closes the valve immediately. The tab tracks what Home
-  Assistant reports, so a zone switched on or off elsewhere shows up here too.
+  sprinkler valve as a named zone. Each zone is a card: the pencil renames it
+  (programs using it follow the new name straight away), and its switch opens
+  the valve for the minutes in **Run for** and counts down - switching it off
+  closes the valve immediately. The card says what the zone is doing or when it
+  last ran today, and tracks what Home Assistant reports, so a zone switched on
+  or off elsewhere shows up here too.
 - **Programs** - a schedule (specific weekdays, or "every N days"), one or
   more **daily cycles**, and an ordered list of zones with a duration each.
   Each program can be built from a lawn growth-stage preset or fully custom,
   and runs its zones either **sequentially** (one at a time - typical for
   most residential water pressure/flow) or **simultaneously** (all at once).
+  The Programs tab shows each as a card with the days it runs, its cycle
+  times and its next run.
 - **Cycles** - one cycle waters every zone in the program once. A seedling
   program might run three cycles a day; established turf runs one. The
   Programs tab previews exactly when each zone starts and warns you if one
   cycle would still be running when the next is due to begin.
-- **Dashboard** - a collapsible panel of zone switches at the top, then what's
-  running right now, the next few scheduled runs, and
-  rain-delay buttons (12h / 24h / 48h / 72h / custom). A rain delay suspends
-  every *scheduled* run until it expires; manual "Run now" / zone test-fires
-  still work during a delay.
-- **History** - an overview of the last two weeks: how much water went out,
-  how long the system ran, a daily activity chart, and the day's runs. A
-  program shows as one run with its zones as numbered steps, so you can see at
-  a glance which step failed and which watered. Anything that errored or was
-  skipped is pulled out into a panel at the top, which can be marked as seen.
+- **Dashboard** - today as a timeline: a lane per zone with everything that
+  watered, is watering and is still to come, and a line at the current time.
+  Below it, a collapsible panel of zone switches, then the next cycle, today's
+  water per zone, and rain-delay buttons (12h / 24h / 48h / 72h / custom). A
+  rain delay suspends every *scheduled* run until it expires; manual "Run now"
+  and zone switches still work during a delay.
+- **History** - one day at a time (today by default; pick another with the
+  date control), as a timeline of runs. A program shows as one run with its
+  zones as numbered steps, so you can see at a glance which step failed and
+  which watered, and what went wrong is written on the run with an
+  **Acknowledge** button. Anything that errored or was skipped, on any day, is
+  also collected in a panel at the top, which can be marked as seen in one go.
+- **Times are the lawn's.** Schedules run in Home Assistant's timezone, and
+  every time on the page is shown in it, wherever you're viewing from.
 
 Weather-based auto rain-delay is not implemented yet - it's a manual button
 for now, by design.
@@ -36,10 +43,10 @@ for now, by design.
 1. Install and start the add-on (see the repo README for adding this
    repository to your Supervisor).
 2. Open StayLiquid from the sidebar.
-3. **Zones tab** - for each sprinkler valve, pick its entity from the
-   dropdown (only `switch.*`/`valve.*` entities show up) and give it a
-   name. Use **Run** with a short duration to test that the right valve
-   actually turns on before you build a schedule around it.
+3. **Zones tab** - hit **Add a zone**, then for each sprinkler valve pick its
+   entity from the dropdown (only `switch.*`/`valve.*` entities show up) and
+   give it a name. Flip its switch with a short **Run for** time to test that
+   the right valve actually turns on before you build a schedule around it.
 4. **Programs tab** - hit **New program**. Pick the growth stage your lawn is
    at and the rest is filled in for you: cycle times, per-zone runtime, and
    every zone you've configured. Step through the schedule and zones, check the
@@ -101,17 +108,17 @@ Set per-program in the **Zone run mode** field:
 
 ## Zone switches
 
-The panel at the top of the Dashboard is a switch per zone, for the times you
-just want a zone on now - moving a sprinkler, checking a head, watering a dry
-patch. Collapse it with the heading if you'd rather lead with what's running;
-it stays how you left it.
+The **Zone control** panel on the Dashboard is a switch per zone, for the times
+you just want a zone on now - moving a sprinkler, checking a head, watering a
+dry patch. Collapse it with the heading if you don't need it; it stays how you
+left it.
 
 - **It shows the valve, not just what the add-on is doing.** A zone switched on
   in Home Assistant or by hand reads as on here, labelled *On - opened
   elsewhere*, and switching it off here closes it.
 - **Turning one on waters it for 10 minutes**, not indefinitely. A switch with
   no timer behind it is one forgotten tap away from watering all night. For a
-  specific length, use **Test run** on the Zones tab.
+  specific length, use the zone's switch and **Run for** on the Zones tab.
 - A zone whose state can't be read shows as *State unknown* and can't be
   switched, rather than guessing. Disabled zones and a paused system are shown
   and locked for the same reason.

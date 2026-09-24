@@ -133,16 +133,23 @@ body {
 .card > .hint { margin: 0 0 14px; }
 .card-hero { border-color: var(--border-strong); }
 
-.hero-head {
+.hint { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+
+/* A section header that sits outside a card: title, a line of context, then
+   whatever action belongs to the section pushed to the right. */
+.list-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 12px;
 }
-.hero-head h2 { margin: 0; }
-
-.hint { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.list-head h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+.list-head .hint { margin: 0; }
+.list-head > .btn,
+.list-head > .date-picker,
+.list-head > .hero-actions { margin-left: auto; }
+.card > .list-head { margin-bottom: 14px; }
 
 .section {
   border-top: 1px solid var(--border);
@@ -463,10 +470,6 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   text-align: center;
 }
 
-.progress { height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 7px; }
-.progress > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 1s linear; }
-.progress.is-paused > i { background: var(--warn); }
-
 .hero-actions { display: flex; align-items: center; gap: 8px; }
 .attention .btn-primary { margin-top: 2px; }
 
@@ -731,93 +734,6 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 }
 .water-readout strong { color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* ---------------------------------------------------------------- chart */
-
-.chart { margin: 4px 0 0; }
-.chart-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 10px;
-}
-.chart-plot { position: relative; }
-
-.chart-grid { position: absolute; inset: 0 0 26px 0; pointer-events: none; }
-.chart-grid span {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-top: 1px solid var(--border);
-}
-.chart-title { display: flex; justify-content: space-between; gap: 12px; }
-.chart-peak { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-
-.chart-bars { display: flex; align-items: flex-end; gap: 2px; height: 132px; }
-.chart-col {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  cursor: default;
-  position: relative;
-}
-.chart-bar {
-  position: relative;
-  width: 100%;
-  max-width: 24px;
-  background: var(--accent);
-  border-radius: 4px 4px 0 0;
-  min-height: 2px;
-  transition: filter .12s;
-}
-.chart-col:hover .chart-bar { filter: brightness(1.15); }
-.chart-col.is-empty .chart-bar { background: var(--border); }
-
-/* Sits just above its own bar, so it points at the day it belongs to. */
-.chart-flag {
-  position: absolute;
-  top: -11px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--critical);
-  border: 2px solid var(--surface);
-  box-sizing: content-box;
-}
-
-.chart-axis { display: flex; gap: 2px; margin-top: 6px; }
-.chart-axis span {
-  flex: 1;
-  min-width: 0;
-  text-align: center;
-  font-size: 10px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-}
-
-.chart-tip {
-  position: absolute;
-  z-index: 5;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  padding: 8px 11px;
-  font-size: 12px;
-  pointer-events: none;
-  white-space: nowrap;
-  transform: translate(-50%, -100%);
-}
-.chart-tip .tip-day { font-weight: 700; margin-bottom: 2px; }
-.chart-tip .tip-row { color: var(--muted); }
-.chart-tip .tip-problem { color: var(--critical); font-weight: 600; }
-
 /* ------------------------------------------------------- attention panel */
 
 .attention {
@@ -840,6 +756,18 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 .attention-head .btn { margin-left: auto; }
 .attention-icon { font-size: 15px; line-height: 1; }
 .attention .hint { margin-bottom: 12px; }
+
+.attention-more { margin-top: 10px; }
+.attention-more > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.attention-more > summary:hover { color: var(--text); }
+.attention-more[open] > summary { margin-bottom: 8px; }
+.attention-more .hint { margin: 10px 0 0; }
 
 /* ---------------------------------------------------- dashboard zone panel */
 
@@ -876,27 +804,36 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 
 .zone-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
   gap: 8px;
   padding: 0 18px 18px;
 }
 
+/* The switch sits above its label, so a row of zones reads as a row of
+   switches rather than a paragraph with a control tacked on the end. */
 .zone-tile {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
+  text-align: center;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 11px 13px;
+  padding: 12px 10px;
   transition: border-color .15s, background .15s;
 }
 .zone-tile.is-on { border-color: var(--accent); background: var(--accent-soft); }
 .zone-tile.is-unknown { opacity: .6; }
-.zone-tile-meta { min-width: 0; }
-.zone-tile-name { font-weight: 650; font-size: 14px; }
-.zone-tile-state { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.zone-tile-meta { min-width: 0; width: 100%; }
+.zone-tile-name {
+  font-weight: 650;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-tile-state { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .zone-tile.is-on .zone-tile-state { color: var(--accent); font-weight: 600; }
 
 /* The switch itself: a track the knob slides along, so on/off reads from
@@ -942,87 +879,137 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
 }
 .date-picker .btn-icon { font-size: 18px; line-height: 1; padding: 4px 9px; }
 
+/* The day as a timeline: the clock down the left, a rail, and one card per
+   program execution opened out into the zones it ran. */
+.run-timeline { display: flex; flex-direction: column; }
+
+.run-event {
+  display: grid;
+  grid-template-columns: 74px 18px minmax(0, 1fr);
+  align-items: stretch;
+}
+.run-when { padding: 13px 10px 0 0; text-align: right; }
+.run-time { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.run-dur { font-size: 11px; color: var(--muted); }
+
+.run-rail { position: relative; display: flex; justify-content: center; }
+.run-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+/* Don't let the rail run off the top of the first event or past the last. */
+.run-event:first-child .run-rail::before { top: 18px; }
+.run-event:last-child .run-rail::before { bottom: auto; height: 18px; }
+.run-dot {
+  position: relative;
+  margin-top: 13px;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-sizing: content-box;
+}
+.run-event.has-problem .run-dot { background: var(--critical); }
+.run-event.is-partial .run-dot { background: var(--warn); }
+
 .run-card {
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 13px 14px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 13px 15px;
+  margin: 0 0 12px 12px;
+  min-width: 0;
 }
-.run-card.has-problem { border-left: 3px solid var(--critical); }
+.run-event.has-problem .run-card { border-color: var(--critical); }
+.run-event.is-partial .run-card { border-color: var(--warn); }
 
-.run-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.run-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.run-name { font-weight: 700; font-size: 14px; }
+.run-water {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
-.run-name { font-weight: 650; font-size: 14px; }
-.run-meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.run-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-/* The step strip: one chip per zone, in the order they were meant to run, so a
-   gap in the middle of a program is obvious without reading any of it.
-   Named run-step, not step: the builder's wizard sections are .step, and a
-   bare .step rule here silently restyled them - it was making the review
-   step's timeline a flex item instead of letting it fill the modal. */
-.step-strip {
+/* Says what went wrong, in words, where it happened - and lets it be cleared
+   from here instead of only from the panel at the top of the tab. */
+.run-problem {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--warn);
+}
+.run-problem > span { flex: 1; min-width: 150px; }
+.run-problem .btn {
+  background: transparent;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.run-problem .btn:hover { background: var(--surface); }
+.run-problem.is-failure { background: var(--danger-soft); border-color: var(--critical); color: var(--danger); }
+.run-problem.is-failure .btn { border-color: var(--danger); color: var(--danger); }
+
+/* One cell per zone, in the order they were meant to run, so a gap in the
+   middle of a program is obvious without reading any of it. Named run-step,
+   not step: the builder's wizard sections are .step, and a bare .step rule
+   here silently restyled them. */
+.run-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 6px;
   list-style: none;
-  margin: 12px 0 0;
+  margin: 11px 0 0;
   padding: 0;
 }
 .run-step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 10px 4px 4px;
-  font-size: 12px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 7px 9px;
 }
 .run-step-n {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  font-size: 11px;
+  display: block;
+  font-size: 9px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  background: var(--border);
+  text-transform: uppercase;
+  letter-spacing: .05em;
   color: var(--muted);
 }
-.run-step-zone { font-weight: 600; }
-.run-step-mark { font-weight: 700; }
-
-.run-step-ok .run-step-n { background: var(--accent-soft); color: var(--accent); }
-.run-step-ok .run-step-mark { color: var(--accent); }
-.run-step-cut { border-color: var(--warn); }
-.run-step-cut .run-step-n { background: var(--warn-soft); color: var(--warn); }
-.run-step-cut .run-step-mark { color: var(--warn); }
-.run-step-bad { border-color: var(--critical); }
-.run-step-bad .run-step-n { background: var(--critical); color: #fff; }
-.run-step-bad .run-step-mark { color: var(--critical); }
-
-.run-problems {
-  margin: 12px 0 0;
-  padding: 10px 12px;
-  list-style: none;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  border: 1px solid var(--border);
+.run-step-zone {
+  display: block;
   font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  font-weight: 650;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.run-problems strong { color: var(--text); font-weight: 650; }
+.run-step-detail { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
 
-.chart-col.is-clickable { cursor: pointer; }
-.chart-col.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run-step-ok { border-color: var(--accent); background: var(--accent-soft); }
+.run-step-ok .run-step-n, .run-step-ok .run-step-detail { color: var(--accent); }
+.run-step-cut { border-color: var(--warn); background: var(--warn-soft); }
+.run-step-cut .run-step-n, .run-step-cut .run-step-detail { color: var(--warn); }
+.run-step-bad { border-color: var(--critical); background: var(--danger-soft); }
+.run-step-bad .run-step-n,
+.run-step-bad .run-step-zone,
+.run-step-bad .run-step-detail { color: var(--danger); }
 
 .sr-only {
   position: absolute;
@@ -1034,15 +1021,284 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   border: 0;
 }
 
-.day-heading {
-  font-size: 11px;
+/* ------------------------------------------------------ the day's track */
+
+/* A lane per zone across a shared clock: what watered, what is watering and
+   what is still queued, all against the same axis. */
+.track { --track-name: 104px; }
+
+.track-rows { display: flex; flex-direction: column; gap: 5px; }
+.track-row {
+  display: grid;
+  grid-template-columns: var(--track-name) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.track-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-lane {
+  position: relative;
+  height: 22px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.blk {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 4px;
+  background: var(--border-strong);
+}
+.blk-done { background: var(--accent); }
+/* Striped rather than just a different green, so "now" differs from "done" by
+   texture as well as colour. The legend's swatch repeats this below. */
+.blk-live {
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, var(--accent-soft) 3px 6px);
+  box-shadow: 0 0 0 1px var(--accent);
+  animation: blk-pulse 1.8s ease-in-out infinite;
+}
+.blk-held { background: var(--warn); }
+.blk-cut { background: var(--warn); }
+.blk-bad { background: var(--critical); }
+/* An outline, not a fill: it hasn't happened yet. A pale fill was ~1.4:1
+   against the lane, and all but vanished in dark mode. */
+.blk-planned { background: transparent; border: 1.5px dashed var(--muted); }
+@keyframes blk-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) {
+  .blk-live { animation: none; }
+}
+
+.track-now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--text);
+  opacity: .5;
+}
+
+.track-axis {
+  display: grid;
+  grid-template-columns: var(--track-name) minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 7px;
+}
+.track-axis-line { position: relative; height: 14px; }
+.track-axis .tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.track-axis .tick.is-first { transform: none; }
+.track-axis .tick.is-last { transform: translateX(-100%); }
+
+.track-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+.key { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.key::before {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+.key-done::before { background: var(--accent); }
+.key-planned::before { background: transparent; border: 1.5px dashed var(--muted); }
+.key-live::before {
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, var(--accent-soft) 3px 6px);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.key-bad::before { background: var(--critical); }
+
+/* --------------------------------------------------------------- tiles */
+
+.tile-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(214px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.tile-label {
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
   color: var(--muted);
-  margin: 14px 0 2px;
 }
-.day-heading:first-child { margin-top: 0; }
+.tile-value {
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 3px;
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+}
+.tile-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.tile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.tile-actions input { width: 64px; padding: 6px 8px; font-size: 13px; }
+
+/* ---------------------------------------------------------- zone cards */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.zone-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 15px 16px;
+  box-shadow: var(--shadow);
+  transition: border-color .15s;
+}
+.zone-card.is-on { border-color: var(--accent); }
+.zone-card-head { display: flex; align-items: flex-start; gap: 10px; }
+.zone-card-id { min-width: 0; flex: 1; }
+.zone-card-title { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.zone-card-title h3 {
+  margin: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-card-entity {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-card-title .btn-icon { border-color: transparent; }
+
+/* What the zone is doing, then the controls on their own row - side by side,
+   the status line got squeezed three lines deep in a two-column grid. */
+.zone-card-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+.zone-card-state { flex: none; }
+.zone-card-detail { font-size: 12px; color: var(--muted); min-width: 0; }
+.zone-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.run-for { display: flex; align-items: center; gap: 6px; margin-right: auto; }
+.run-for input { width: 62px; padding: 6px 8px; font-size: 13px; }
+
+/* ------------------------------------------------------- program cards */
+
+.stack-lg { display: flex; flex-direction: column; gap: 12px; }
+
+.program-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 15px 17px;
+  box-shadow: var(--shadow);
+}
+.program-card.is-off { opacity: .72; }
+.program-head { display: flex; align-items: flex-start; gap: 14px; }
+.program-id { min-width: 0; flex: 1; }
+.program-stage {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--accent);
+}
+.program-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.program-title h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.program-detail { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.program-next { flex: none; text-align: right; }
+.program-next-time {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.program-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.program-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+
+/* Seven boxes, the running days filled in - the cadence at a glance. */
+.week-strip { display: flex; gap: 3px; }
+.week-day {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.week-day.is-on { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+
+.cycle-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.chip-cadence { color: var(--text); }
+.chip-empty { border-style: dashed; }
 
 /* -------------------------------------------------------------- toasts */
 
@@ -1110,4 +1366,21 @@ table.timeline tbody th small { display: block; font-weight: 500; color: var(--m
   .zone-row { grid-template-columns: 22px 1fr 60px auto auto; gap: 6px; }
   .zone-row-water { display: none; }
   .add-zone-row { grid-template-columns: 1fr 64px auto auto; }
+
+  /* The day's track: zone names get a lot less room, so lean on the lane. */
+  .track { --track-name: 74px; }
+  .track-name { font-size: 11px; }
+  .track-row, .track-axis { gap: 8px; }
+
+  .card-grid { grid-template-columns: 1fr; }
+
+  .program-head { flex-direction: column; gap: 8px; }
+  .program-next { text-align: left; }
+  .program-actions { margin-left: 0; width: 100%; }
+
+  .run-event { grid-template-columns: 62px 14px minmax(0, 1fr); }
+  .run-when { padding-right: 6px; }
+  .run-time { font-size: 12px; }
+  .run-card { margin-left: 10px; padding: 12px 13px; }
+  .run-water { margin-left: 0; flex-basis: 100%; }
 }

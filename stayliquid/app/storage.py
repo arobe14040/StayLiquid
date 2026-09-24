@@ -478,6 +478,17 @@ def list_unacknowledged(statuses: tuple[str, ...], limit: int = 20) -> list[dict
     return [row_to_dict(r) for r in rows]
 
 
+def count_unacknowledged(statuses: tuple[str, ...]) -> int:
+    """How many problem rows are outstanding - list_unacknowledged() only
+    returns the most recent few, which is not the same number."""
+    placeholders = ",".join("?" * len(statuses))
+    return get_conn().execute(
+        f"SELECT COUNT(*) FROM run_log "
+        f"WHERE status IN ({placeholders}) AND acknowledged_at IS NULL",
+        statuses,
+    ).fetchone()[0]
+
+
 def acknowledge_runs(run_ids: list[int] | None, statuses: tuple[str, ...]) -> int:
     """Mark problem rows as seen. With no ids, clears everything outstanding."""
     ts = now_iso()

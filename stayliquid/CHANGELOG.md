@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.10.0
+
+A redesign of all four tabs, from the mockups you picked - and a scheduling
+fix that turned up while building it.
+
+**Dashboard - the day as a timeline.** One lane per zone across today, with a
+block for everything that watered, is watering (striped) or is still to come
+(outlined), and a line at the current time. Failures and cut-short runs show in
+their own colours, so an odd day is obvious at a glance. Zone control sits
+underneath as a row of switches, then three tiles: the next cycle, how much
+water each zone has had today, and rain delay with its buttons.
+
+**Zones - a card per zone.** Name with its rename pencil, the entity, and an
+on/off switch that runs the zone for the minutes in *Run for*. Each card says
+what the zone is doing - *Watering, 6m left*, *On - opened outside the add-on*,
+or when it last ran today. Add a zone from the button at the top.
+
+**Programs - cards with a week strip.** The days a program runs are filled in,
+its cycle times sit beside them as chips, and its next run is on the right.
+Interval programs show *Every 3 days* instead.
+
+**History - a timeline of the day.** Each run is a card on a rail, opened out
+into its zones as numbered steps, so a program that failed at step 3 reads
+exactly like that. What went wrong is spelled out on the card, with an
+**Acknowledge** button right there. Red is kept for real failures; a rain-delay
+skip or a zone someone stopped is amber. The "needs a look" panel now shows the
+latest three with the rest folded away, and counts every outstanding problem -
+it used to stop at 12, and *Mark all as seen* only cleared those.
+
+### Fixes
+
+- **Schedules now actually run in Home Assistant's timezone.** 0.2.1 made the
+  add-on look the timezone up from Home Assistant, but the jobs never used it:
+  APScheduler only applies the scheduler's timezone to triggers made from a
+  name, and ours were built as objects, so they fell back to the container's
+  own clock. That only matters when the container's `TZ` is out of date - the
+  case the lookup was there for - but then every cycle ran hours off.
+- **A new interval program no longer skips its first day** when saved in the
+  evening. Its start date was the UTC date, which is already tomorrow for most
+  of the Americas by dinner time.
+- **Every time on the page is the lawn's time**, not the browser's. Viewed from
+  another timezone, *Next run* no longer disagrees with a program's own cycle
+  times, and *Today* on History is the lawn's today.
+- The Programs tab no longer says *not scheduled* for a program that is. Its
+  next-run times came from the Dashboard's short list, which three programs of
+  three cycles each already overflow.
+- A zone switch's label no longer contradicts the switch while a request is in
+  flight (*Watering* beside a switch just turned off), and a request that fails
+  puts the switch back straight away rather than at the next refresh.
+
+### API
+
+- `GET /api/status` adds `timezone` and `planned_today` - every zone slot still
+  due today, worked out by the scheduler.
+- `GET /api/programs` adds each program's `next_run_time`.
+- `GET /api/history/stats` adds `attention_total`.
+
 ## 0.9.1
 
 The program builder now fits the screen instead of scrolling through it.

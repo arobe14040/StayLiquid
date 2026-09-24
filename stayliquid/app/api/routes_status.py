@@ -9,7 +9,7 @@ from .. import storage
 from ..presets import inches_for
 from .. import runner, state_watch
 from ..runner import current_runs, rain_delay_active
-from ..scheduler import next_events, scheduler
+from ..scheduler import next_events, planned_today, scheduler
 
 router = APIRouter()
 
@@ -60,10 +60,15 @@ async def status():
         ],
         "zones_live": live,
         "version": os.environ.get("APP_VERSION", "dev"),
+        # The zone every schedule runs in, so the page can show clock times as
+        # they are at the lawn rather than wherever the viewer happens to be.
+        "timezone": str(scheduler.timezone),
         "pause": await runner.pause_state(),
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},
         "current_runs": current_runs,
         "next_events": next_events(),
+        # Reads a row per program, so keep it off the event loop.
+        "planned_today": await run_in_threadpool(planned_today),
     }
 
 
@@ -163,6 +168,10 @@ async def history_stats(days: int = 14):
         # ago and was never looked at is exactly what this panel is for.
         "attention": await run_in_threadpool(
             storage.list_unacknowledged, PROBLEM_STATUSES, 12
+        ),
+        # The list above is only the latest dozen; this is how many there are.
+        "attention_total": await run_in_threadpool(
+            storage.count_unacknowledged, PROBLEM_STATUSES
         ),
     }
 
