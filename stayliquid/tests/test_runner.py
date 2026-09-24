@@ -147,3 +147,37 @@ def test_a_zone_listed_twice_waters_twice_in_order(ha):
 
     assert ha.opened() == ["switch.front", "switch.back", "switch.front"]
     assert statuses(program["id"]) == ["completed", "completed", "completed"]
+
+
+def test_zones_waiting_their_turn_are_still_to_come(ha):
+    """Once a cycle starts, the scheduler's next run for it is tomorrow; the
+    zones yet to run in it used to vanish from the Dashboard until they began."""
+    front = add_zone("switch.front", "Front")
+    back = add_zone("switch.back", "Back")
+    side = add_zone("switch.side", "Side")
+    program = add_program([front, back, side], seconds=3)
+    far = datetime.now(timezone.utc) + timedelta(days=1)
+
+    def first_start_in(slots):
+        return (datetime.fromisoformat(slots[0]["start"]) - datetime.now(timezone.utc)).total_seconds()
+
+    async def scenario():
+        task = asyncio.create_task(runner.run_program(program["id"], "scheduled"))
+        await asyncio.sleep(0.5)
+
+        slots = runner.pending_steps(far)
+        assert [s["zone_id"] for s in slots] == [back["id"], side["id"]]
+        assert 1.5 < first_start_in(slots) < 3.0      # when Front is due to finish
+        assert slots[1]["start"] == slots[0]["end"]    # then one after another
+
+        # Held time doesn't run down while paused, so the estimate slides.
+        await runner.pause_until(in_seconds(60))
+        held = first_start_in(runner.pending_steps(far))
+        await asyncio.sleep(1)
+        assert first_start_in(runner.pending_steps(far)) > held - 0.2
+        await runner.pause_until(None)
+
+        await asyncio.wait_for(task, timeout=15)
+        assert runner.pending_steps(far) == []
+
+    asyncio.run(scenario())

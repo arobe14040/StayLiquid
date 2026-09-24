@@ -77,9 +77,23 @@ async def status():
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},
         "current_runs": current_runs,
         "next_events": await run_in_threadpool(next_events),
-        # Reads a row per program, so keep it off the event loop.
-        "planned_today": await run_in_threadpool(planned_today),
+        "planned_today": await _planned_today(),
     }
+
+
+async def _planned_today() -> list[dict]:
+    """Every zone slot still due today: cycles the scheduler has yet to start,
+    plus the zones still waiting their turn in a program running now - which
+    the scheduler no longer counts, since its cycle has already fired."""
+    tz = scheduler.timezone
+    end_of_day = datetime.combine(
+        datetime.now(tz).date() + timedelta(days=1), time.min, tzinfo=tz
+    )
+    # Reads a row per program, so keep it off the event loop.
+    slots = await run_in_threadpool(planned_today)
+    slots += runner.pending_steps(end_of_day)
+    slots.sort(key=lambda s: datetime.fromisoformat(s["start"]))
+    return slots
 
 
 @router.post("/raindelay")

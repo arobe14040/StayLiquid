@@ -248,3 +248,23 @@ def test_a_repeat_is_refused_when_zones_water_all_at_once(client):
     program = client.post("/api/programs", json=program_body(zones=twice)).json()
     resp = client.put(f"/api/programs/{program['id']}", json={"run_mode": "simultaneous"})
     assert resp.status_code == 422
+
+
+def test_status_shows_the_rest_of_a_running_program(client, ha):
+    front = add_zone("switch.front", "Front")
+    back = add_zone("switch.back", "Back")
+    program = add_program([front, back], seconds=60)
+
+    assert client.post(f"/api/programs/{program['id']}/run_now").status_code == 200
+    import time
+    time.sleep(0.5)   # the run starts on the client's event loop
+
+    status = client.get("/api/status").json()
+    assert [r["zone_name"] for r in status["current_runs"]] == ["Front"]
+    assert [s["zone_id"] for s in status["planned_today"]
+            if s["program_id"] == program["id"]] == [back["id"]]
+
+    # Deleting the program stops it for good, rather than just its current zone.
+    client.delete(f"/api/programs/{program['id']}")
+    time.sleep(0.3)
+    assert client.get("/api/status").json()["planned_today"] == []

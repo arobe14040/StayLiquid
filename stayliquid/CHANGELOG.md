@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.5
+
+**The rest of a running cycle stays on the Dashboard.** As soon as a program
+started, the zones still waiting their turn in it disappeared from today's
+timeline. They showed up again only as each one began watering.
+
+The *still to come* boxes come from the scheduler, and it only knows when a
+cycle starts. Once a cycle fires, its next run is tomorrow, so the zones
+queued behind the one watering weren't done, weren't watering, and weren't
+planned. They didn't appear anywhere, though they still watered.
+
+- The add-on now keeps track of each program it's partway through. Its
+  remaining zones are shown as still to come, starting when the zone before
+  is due to finish, one after another.
+- While watering is paused those times slide later, since the held zone's
+  remaining time doesn't run down with its valve shut.
+- If the program is stopped, deleted, or ends early, its remaining boxes go
+  with it.
+
 ## 0.10.4
 
 **A zone can be in a program more than once.** Growth-stage presets still

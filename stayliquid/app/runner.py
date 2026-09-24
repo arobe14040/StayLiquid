@@ -5,7 +5,7 @@ right now" for the dashboard to poll.
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from starlette.concurrency import run_in_threadpool
@@ -84,6 +84,13 @@ HALTING_OUTCOMES = ("paused_expired", "interrupted", "error")
 # as each zone finishes. Kept in memory only; a restart clears it, which is
 # fine since the scheduler also re-evaluates from the database on restart.
 current_runs: list[dict] = []
+
+# Programs part-way through their zones, one at a time: group_id -> the steps
+# and which one is under way. The scheduler only knows when a cycle *starts* -
+# once it fires, its next run is tomorrow - so without this the zones still
+# waiting their turn in a running cycle weren't anywhere: not done, not
+# watering, not planned. pending_steps() turns this into the rest of the cycle.
+_executions: dict[str, dict] = {}
 
 
 def fmt_duration(seconds: float) -> str:
@@ -433,6 +440,48 @@ async def recover_orphaned_runs() -> int:
     return len(orphans)
 
 
+def pending_steps(until: datetime) -> list[dict]:
+    """The zones still waiting their turn in programs running now, as
+    estimated slots: each starts when the one before it is due to finish.
+
+    The zone watering now is left out - it's already in current_runs. A pause
+    pushes everything back, since the time a held zone still owes doesn't run
+    down while its valve is shut. Slots starting at or after `until` (the end
+    of the lawn's day) are left out, like the scheduler's own."""
+    now = datetime.now(timezone.utc)
+    slots = []
+    for execution in list(_executions.values()):
+        current = execution["current"]
+        entry = next(
+            (r for r in current_runs
+             if r.get("group_id") == execution["group_id"] and r.get("step") == current),
+            None,
+        )
+        cursor = now
+        if entry is not None:
+            left = float(entry.get("seconds_left", entry["duration_minutes"] * 60))
+            if not entry.get("paused") and entry.get("resumed_at"):
+                left -= (now - datetime.fromisoformat(entry["resumed_at"])).total_seconds()
+            cursor = now + timedelta(seconds=max(0.0, left))
+
+        for step, zone_id, minutes in execution["steps"]:
+            if current is not None and step <= current:
+                continue
+            start, end = cursor, cursor + timedelta(minutes=minutes)
+            cursor = end
+            if start >= until:
+                break
+            slots.append({
+                "program_id": execution["program_id"],
+                "program_name": execution["program_name"],
+                "zone_id": zone_id,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "minutes": minutes,
+            })
+    return slots
+
+
 async def rain_delay_active() -> bool:
     delay = await run_in_threadpool(storage.get_rain_delay)
     until = delay.get("until") if delay else None
@@ -488,17 +537,30 @@ async def run_program(program_id: int, trigger_source: str = "scheduled") -> Non
             for step, zone in steps
         ))
     else:
-        for step, zone in steps:
-            if _shutting_down or program_id in _cancelled_programs:
-                return
-            outcome = await _run_zone(program, zone, trigger_source, group_id, step, len(zones))
-            if outcome in HALTING_OUTCOMES:
-                if step < len(zones):
-                    log.warning(
-                        "%s: step %d ended '%s' - not starting the remaining %d zone(s).",
-                        program["name"], step, outcome, len(zones) - step,
-                    )
-                return
+        execution = {
+            "group_id": group_id,
+            "program_id": program_id,
+            "program_name": program["name"],
+            "steps": [(step, zone["zone_id"], float(zone["duration_minutes"])) for step, zone in steps],
+            "current": None,
+        }
+        _executions[group_id] = execution
+        try:
+            for step, zone in steps:
+                if _shutting_down or program_id in _cancelled_programs:
+                    return
+                execution["current"] = step
+                outcome = await _run_zone(program, zone, trigger_source, group_id, step, len(zones))
+                if outcome in HALTING_OUTCOMES:
+                    if step < len(zones):
+                        log.warning(
+                            "%s: step %d ended '%s' - not starting the remaining %d zone(s).",
+                            program["name"], step, outcome, len(zones) - step,
+                        )
+                    return
+        finally:
+            # However it ends, its remaining zones are no longer coming.
+            _executions.pop(group_id, None)
 
 
 async def _run_zone(program: dict, zone: dict, trigger_source: str,
@@ -591,6 +653,10 @@ async def _water(
             "entity_id": entity_id,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "duration_minutes": minutes,
+            # Which program execution and step this is, so pending_steps can
+            # tell where in its program the run is.
+            "group_id": group_id,
+            "step": step,
         }
         stop_event = asyncio.Event()
         _stop_events[entity_id] = stop_event
