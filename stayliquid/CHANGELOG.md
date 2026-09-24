@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.4
+
+**A zone can be in a program more than once.** Growth-stage presets still
+fill in every zone for you, but the builder no longer hides a zone once it's
+in the list. Add it again for a second pass later in the same cycle, such as
+a short run, the other zones, then another run once the first has soaked in.
+
+- The repeat is numbered, *Front lawn (2)*, in the zone list and on the
+  review timeline. The zone picker shows what's already in, *Front lawn
+  (added ×2)*, and keeps your pick, so adding a zone twice is two clicks.
+- Program cards and the zone count read *3 zones, 4 runs* when a zone repeats.
+- Repeats need zones to run **one at a time**. A valve can't water twice at
+  the same moment, so in *all at once* mode the builder explains that instead
+  of saving a program that would quietly run the repeat later. The API refuses
+  it too.
+
 ## 0.10.3
 
 Two History labels that said the wrong thing, and a README with screenshots.

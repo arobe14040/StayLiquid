@@ -63,6 +63,18 @@ def _check_schedule(program: dict) -> None:
     elif not program.get("weekdays"):
         raise HTTPException(422, "A weekday program needs at least one day.")
 
+    # A zone may be in a program more than once - it just runs again at its
+    # turn. All at once, though, the repeat would wait on the zone's own run
+    # and water after it, while everything else says "together".
+    if program.get("run_mode") == "simultaneous":
+        zone_ids = [z["zone_id"] for z in program.get("zones") or []]
+        if len(zone_ids) != len(set(zone_ids)):
+            raise HTTPException(
+                422,
+                "A zone can only be in a program once when its zones water all at "
+                "once. Run them one at a time to water a zone twice.",
+            )
+
 
 class ProgramZoneIn(BaseModel):
     zone_id: int

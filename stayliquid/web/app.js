@@ -1347,15 +1347,54 @@ function renderCycles() {
 
 // -- builder: zones
 
+/** How many times each zone is already in the program being built. */
+function zoneUses() {
+  const uses = new Map();
+  builder.zones.forEach((z) => uses.set(z.zone_id, (uses.get(z.zone_id) || 0) + 1));
+  return uses;
+}
+
+/**
+ * Every zone stays on offer, including ones already in the program: running a
+ * zone twice in a cycle (a soak, then another pass once it has sunk in) is a
+ * real schedule, not a mistake. The ones already in say so.
+ */
 function refreshZoneAddSelect() {
   const select = el("pf-add-zone-select");
-  const used = new Set(builder.zones.map((z) => z.zone_id));
-  const available = zonesCache.filter((z) => !used.has(z.id));
-  select.innerHTML = available.length
-    ? available.map((z) => `<option value="${z.id}">${escapeHtml(z.name)}</option>`).join("")
-    : `<option value="">All zones added</option>`;
-  select.disabled = !available.length;
-  el("pf-add-zone-btn").disabled = !available.length;
+  const uses = zoneUses();
+  const previous = select.value;
+  select.innerHTML = zonesCache.length
+    ? zonesCache.map((z) => {
+        const n = uses.get(z.id) || 0;
+        const note = n ? ` (added${n > 1 ? ` ×${n}` : ""})` : "";
+        return `<option value="${z.id}">${escapeHtml(z.name)}${note}</option>`;
+      }).join("")
+    : `<option value="">No zones yet</option>`;
+  // Keep the pick across re-renders, so adding a zone twice is two clicks.
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
+  select.disabled = !zonesCache.length;
+  el("pf-add-zone-btn").disabled = !zonesCache.length;
+}
+
+/**
+ * Names for the program's zones in order, numbering the repeats - "Front lawn",
+ * then "Front lawn (2)" - so the timeline's columns can be told apart.
+ */
+function zoneStepLabels() {
+  const total = zoneUses();
+  const seen = new Map();
+  return builder.zones.map((z) => {
+    const n = (seen.get(z.zone_id) || 0) + 1;
+    seen.set(z.zone_id, n);
+    return total.get(z.zone_id) > 1 ? `${z.zone_name} (${n})` : z.zone_name;
+  });
+}
+
+/** A zone listed twice can't water twice at the same moment. */
+function repeatedZoneWhileTogether() {
+  if (builder.runMode !== "simultaneous") return null;
+  const uses = zoneUses();
+  return builder.zones.find((z) => uses.get(z.zone_id) > 1) || null;
 }
 
 on("pf-add-zone-btn", "click", () => {
@@ -1372,9 +1411,13 @@ function renderBuilderZones() {
   const list = el("pf-zones-list");
   const pill = el("zone-count-pill");
   if (pill) {
-    pill.textContent = builder.zones.length
-      ? `${builder.zones.length} zone${builder.zones.length === 1 ? "" : "s"}`
-      : "none yet";
+    const distinct = zoneUses().size;
+    const runs = builder.zones.length;
+    pill.textContent = !runs
+      ? "none yet"
+      : distinct === runs
+        ? `${runs} zone${runs === 1 ? "" : "s"}`
+        : `${distinct} zone${distinct === 1 ? "" : "s"}, ${runs} runs`;
   }
 
   if (!builder.zones.length) {
@@ -1391,13 +1434,14 @@ function renderBuilderZones() {
   // bottom of the modal on a laptop.
   list.innerHTML = `<ol class="zone-rows"></ol>`;
   const rows = list.firstElementChild;
+  const labels = zoneStepLabels();
 
   builder.zones.forEach((z, idx) => {
     const row = document.createElement("li");
     row.className = "zone-row";
     row.innerHTML = `
       <span class="zone-row-n">${idx + 1}</span>
-      <span class="zone-row-name">${escapeHtml(z.zone_name)}</span>
+      <span class="zone-row-name">${escapeHtml(labels[idx])}</span>
       <span class="zone-row-water"></span>
       <input type="number" class="zone-minutes" value="${z.duration_minutes}"
              min="0.5" step="0.5" aria-label="Minutes for ${escapeHtml(z.zone_name)}" />
@@ -1524,8 +1568,8 @@ function renderTimeline() {
     return;
   }
 
-  const header = builder.zones
-    .map((z) => `<th>${escapeHtml(z.zone_name)}</th>`)
+  const header = zoneStepLabels()
+    .map((label) => `<th>${escapeHtml(label)}</th>`)
     .join("");
   const body = rows
     .map((r) => {
@@ -1718,6 +1762,11 @@ function stepProblem(step) {
   if (step === "zones") {
     const empty = builder.zones.find((z) => !(Number(z.duration_minutes) > 0));
     if (empty) return `Give ${empty.zone_name} a runtime, or remove it.`;
+    const repeated = repeatedZoneWhileTogether();
+    if (repeated) {
+      return `${repeated.zone_name} is in twice, but zones are set to water all at once - `
+        + "a valve can't run twice at the same time. Switch to one at a time, or remove the repeat.";
+    }
   }
   return null;
 }
@@ -1851,7 +1900,10 @@ function renderProgramsList(programs) {
 
   list.innerHTML = "";
   programs.forEach((p) => {
-    const zoneCount = p.zones.length;
+    // A zone can be in a program more than once; count zones, and say how many
+    // runs that makes when it differs.
+    const zoneCount = new Set(p.zones.map((z) => z.zone_id)).size;
+    const runCount = p.zones.length;
     const perCycle = p.zones.reduce((a, z) => a + z.duration_minutes, 0);
     const runtime = p.run_mode === "simultaneous"
       ? Math.max(0, ...p.zones.map((z) => z.duration_minutes))
@@ -1872,7 +1924,7 @@ function renderProgramsList(programs) {
           </div>
           <div class="program-detail">${
             zoneCount ? `${zoneCount} zone${zoneCount === 1 ? "" : "s"}` : "no zones"
-          } &middot; ${
+          }${runCount > zoneCount ? `, ${runCount} runs` : ""} &middot; ${
             runtimes.size === 1 ? `${[...runtimes][0]} min each` : "mixed runtimes"
           } &middot; ${
             p.run_mode === "simultaneous" ? "all together" : "one at a time"

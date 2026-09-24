@@ -207,7 +207,8 @@ def next_events(limit: int = 6) -> list[dict]:
                 "program_id": program_id,
                 "program_name": program["name"],
                 "zones": zone_names,
-                "zone_count": len(program["zones"]),
+                # Zones, not runs - a program may water one zone twice.
+                "zone_count": len({z["zone_id"] for z in program["zones"]}),
                 "run_mode": program["run_mode"],
                 "next_run_time": job.next_run_time.isoformat(),
             }

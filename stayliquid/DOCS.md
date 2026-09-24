@@ -16,7 +16,13 @@
   most residential water pressure/flow) or **simultaneously** (all at once).
   The Programs tab shows each as a card with the days it runs, its cycle
   times and its next run.
-- **Cycles** - one cycle waters every zone in the program once. A seedling
+  A zone can be in the list **more than once** - say, a short pass, the
+  other zones, then a second pass once the first has soaked in (a
+  "cycle and soak" that stops water running off before it sinks in). The
+  repeat is numbered in the builder, *Front lawn (2)*. This needs sequential
+  mode: one valve can't water twice at the same moment, so in simultaneous
+  mode each zone can appear only once.
+- **Cycles** - one cycle waters every entry in the program's zone list once. A seedling
   program might run three cycles a day; established turf runs one. The
   Programs tab previews exactly when each zone starts and warns you if one
   cycle would still be running when the next is due to begin.

@@ -220,3 +220,31 @@ def test_an_unavailable_zone_says_so(client, ha, monkeypatch):
     resp = client.post(f"/api/zones/{zone['id']}/run", json={"minutes": 5})
     assert resp.status_code == 409
     assert "unavailable" in resp.json()["detail"]
+
+
+# ---- a zone more than once ------------------------------------------------
+
+def test_a_zone_can_be_in_a_program_twice(client):
+    front = add_zone("switch.front", "Front")
+    back = add_zone("switch.back", "Back")
+    resp = client.post("/api/programs", json=program_body(zones=[
+        {"zone_id": front["id"], "duration_minutes": 10, "sort_order": 0},
+        {"zone_id": back["id"], "duration_minutes": 10, "sort_order": 1},
+        {"zone_id": front["id"], "duration_minutes": 5, "sort_order": 2},
+    ]))
+    assert resp.status_code == 200, resp.text
+    saved = [(z["zone_name"], z["duration_minutes"]) for z in resp.json()["zones"]]
+    assert saved == [("Front", 10), ("Back", 10), ("Front", 5)]
+
+
+def test_a_repeat_is_refused_when_zones_water_all_at_once(client):
+    front = add_zone("switch.front", "Front")
+    twice = [{"zone_id": front["id"], "duration_minutes": 10}] * 2
+    resp = client.post("/api/programs", json=program_body(run_mode="simultaneous", zones=twice))
+    assert resp.status_code == 422
+    assert "once" in resp.json()["detail"]
+
+    # ...and an existing program with a repeat can't be switched to all at once.
+    program = client.post("/api/programs", json=program_body(zones=twice)).json()
+    resp = client.put(f"/api/programs/{program['id']}", json={"run_mode": "simultaneous"})
+    assert resp.status_code == 422

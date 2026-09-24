@@ -1,5 +1,5 @@
 name: StayLiquid
-version: "0.10.3"
+version: "0.10.4"
 slug: stayliquid
 description: Sprinkler zone scheduling with lawn growth-stage presets and rain delay
 url: "https://github.com/arobe14040/StayLiquid"

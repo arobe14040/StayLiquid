@@ -136,3 +136,14 @@ def test_a_valve_being_closed_by_the_add_on_reads_as_closing(ha, monkeypatch):
 
     assert seen == [True]
     assert runner.closing_now("valve.garden") is False
+
+
+def test_a_zone_listed_twice_waters_twice_in_order(ha):
+    front = add_zone("switch.front", "Front")
+    back = add_zone("switch.back", "Back")
+    program = add_program([front, back, front], seconds=0.2)
+
+    asyncio.run(runner.run_program(program["id"], "scheduled"))
+
+    assert ha.opened() == ["switch.front", "switch.back", "switch.front"]
+    assert statuses(program["id"]) == ["completed", "completed", "completed"]
