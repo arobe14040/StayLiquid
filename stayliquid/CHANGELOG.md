@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.10.1
+
+Fixes from a review of the whole add-on. Most are about pausing, and one
+means `valve.*` zones work for the first time.
+
+- **An expired pause could stop the schedule for good.** When a pause ran out
+  and no zone happened to be held at that moment (you'd stopped it, or the
+  add-on restarted mid-pause), the add-on never noticed the pause had ended.
+  Every scheduled program after that was skipped as *watering paused*, while
+  the Dashboard said you weren't paused at all. A pause now ends on time
+  whether or not anything is waiting on it.
+- **A pause that runs out ends the program**, as the docs always said.
+  Previously only the zone that was held stopped, and the program went straight
+  on to open the next one. The same goes for a zone that errors, since that can
+  mean a valve that wouldn't close.
+- **Shutting down can no longer open the next zone.** Closing a running valve
+  during shutdown looked like "switched off in Home Assistant", so a program
+  moved on to its next zone just as the add-on was stopping.
+- **`valve.*` zones work.** They were being sent `turn_on`/`turn_off`, which
+  valves don't have, so they failed to start. Their `open`/`closed` states also
+  weren't recognised, so they always showed as off. They now use `open_valve`
+  and `close_valve`, and read as on/off like a switch.
+- **Disabled zones are actually skipped.** The Zones tab said programs skip a
+  disabled zone, but they watered it anyway. A disabled zone also can't be run
+  by hand now.
+- **Deleting a zone or a program stops it** if it's watering, instead of leaving
+  it to run out its time with nothing on the page able to stop it.
+- **Large Home Assistant installs keep their live connection.** The initial
+  state read could pass the WebSocket's 1 MiB message limit, which dropped the
+  connection on every attempt and left the add-on polling.
+- **Bad program settings are refused when saved**, not after. An unknown
+  weekday, an interval program with no interval, a zero-minute zone and so on
+  now get a clear error. One of these used to stop the add-on from starting at
+  all; a program the scheduler can't handle is now logged and skipped instead.
+  Manual runs are limited to 12 hours.
+- **History follows renamed zones.** A zone's earlier runs today no longer
+  vanish from its Dashboard lane when you rename it.
+- **"Runs" in the History stats** counts only runs that watered for their full
+  time. It was including skipped and stopped ones.
+- Database writes from different requests can no longer interfere with each
+  other.
+- The Dashboard stops polling while its browser tab is hidden, and catches up
+  as soon as the tab is shown again.
+
 ## 0.10.0
 
 A redesign of all four tabs, from the mockups you picked - and a scheduling

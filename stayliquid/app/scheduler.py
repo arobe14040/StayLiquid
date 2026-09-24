@@ -114,7 +114,12 @@ def sync_all() -> None:
     for job in scheduler.get_jobs():
         job.remove()
     for program in storage.list_programs():
-        sync_program(program)
+        # One program that can't be scheduled mustn't stop the rest, or the
+        # add-on from starting - this runs inside startup.
+        try:
+            sync_program(program)
+        except Exception:
+            log.exception("Could not schedule program %s (%s).", program["id"], program["name"])
 
 
 def planned_today() -> list[dict]:
@@ -147,6 +152,9 @@ def planned_today() -> list[dict]:
         offset = 0.0
         for zone in program["zones"]:
             minutes = float(zone["duration_minutes"] or 0)
+            # The runner leaves these out, so they take no time in the sequence.
+            if minutes <= 0 or not zone.get("zone_enabled", 1):
+                continue
             start = fire + timedelta(minutes=offset if sequential else 0)
             if sequential:
                 offset += minutes
@@ -182,11 +190,15 @@ def next_run_times() -> dict[int, str]:
 
 def next_events(limit: int = 6) -> list[dict]:
     events = []
+    # One job per cycle, so the same program turns up several times - read it once.
+    programs: dict[int, dict | None] = {}
     for job in scheduler.get_jobs():
         if job.next_run_time is None:
             continue
         program_id = job.args[0] if job.args else None
-        program = storage.get_program(program_id) if program_id else None
+        if program_id not in programs:
+            programs[program_id] = storage.get_program(program_id) if program_id else None
+        program = programs[program_id]
         if not program:
             continue
         zone_names = ", ".join(z["zone_name"] for z in program["zones"]) or "(no zones)"

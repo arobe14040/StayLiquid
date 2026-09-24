@@ -264,6 +264,14 @@ function fmtInches(value) {
   return `${value.toFixed(2).replace(/^0/, "")}"`;
 }
 
+/**
+ * Which zone a history step belongs to. By id, so a renamed zone keeps what it
+ * did earlier in the day; by name only for rows too old to carry an id.
+ */
+function stepZoneKey(step) {
+  return step.zone_id ?? step.zone_name;
+}
+
 function fmtDuration(minutes) {
   const total = Math.round(Number(minutes) || 0);
   const h = Math.floor(total / 60);
@@ -608,6 +616,7 @@ function buildTodayLanes(status) {
   const lanes = new Map();
   status.zones.forEach((z) => lanes.set(z.id, { name: z.name, blocks: [] }));
 
+  const ids = new Set(status.zones.map((z) => z.id));
   const idByName = new Map(status.zones.map((z) => [z.name, z.id]));
   const push = (zoneId, block) => {
     const lane = lanes.get(zoneId);
@@ -619,7 +628,7 @@ function buildTodayLanes(status) {
   todayPlan.runs.forEach((run) => {
     run.steps.forEach((s) => {
       if (!s.zone_name || !s.started_at || s.status === "running") return;
-      const zoneId = idByName.get(s.zone_name);
+      const zoneId = ids.has(s.zone_id) ? s.zone_id : idByName.get(s.zone_name);
       if (zoneId == null) return;
       const start = new Date(s.started_at).getTime();
       const ended = s.ended_at ? new Date(s.ended_at).getTime() : start;
@@ -760,7 +769,7 @@ function renderTiles(status) {
   const steps = todayPlan.runs
     .flatMap((r) => r.steps)
     .filter((s) => s.zone_name && s.minutes > 0);
-  const zonesRun = new Set(steps.map((s) => s.zone_name));
+  const zonesRun = new Set(steps.map(stepZoneKey));
   const minutes = steps.reduce((total, s) => total + s.minutes, 0);
   el("tile-water-value").textContent = zonesRun.size
     ? fmtInches(inchesFor(minutes / zonesRun.size))
@@ -862,6 +871,9 @@ function paintZoneRunState(currentRuns) {
     refs.toggle.setAttribute("aria-label", `${isOn ? "Stop" : "Test run"} ${refs.name}`);
     refs.card.classList.toggle("is-on", isOn);
     refs.minutes.disabled = isOn;
+    // The add-on refuses to run a disabled zone, so don't offer to - but a
+    // disabled zone that's open can still be switched off.
+    refs.toggle.disabled = !isOn && !refs.enabled;
 
     let state = refs.enabled ? "Off" : "Disabled";
     let tone = "pill-quiet";
@@ -921,8 +933,9 @@ async function loadZonesTab() {
   history.runs.forEach((run) => {
     run.steps.forEach((s) => {
       if (!s.zone_name || !s.started_at) return;
-      const seen = lastToday.get(s.zone_name);
-      if (!seen || s.started_at > seen.started_at) lastToday.set(s.zone_name, s);
+      const key = stepZoneKey(s);
+      const seen = lastToday.get(key);
+      if (!seen || s.started_at > seen.started_at) lastToday.set(key, s);
     });
   });
 
@@ -939,7 +952,7 @@ async function loadZonesTab() {
 
   list.innerHTML = "";
   zones.forEach((z) => {
-    const last = lastToday.get(z.name);
+    const last = lastToday.get(z.id) ?? lastToday.get(z.name);
     const idle = !z.enabled
       ? "Programs skip this zone while it's disabled"
       : last
@@ -1675,6 +1688,10 @@ function stepProblem(step) {
       ? "Add at least one zone."
       : "You have no zones yet - add them on the Zones tab first.";
   }
+  if (step === "zones") {
+    const empty = builder.zones.find((z) => !(Number(z.duration_minutes) > 0));
+    if (empty) return `Give ${empty.zone_name} a runtime, or remove it.`;
+  }
   return null;
 }
 
@@ -2169,7 +2186,7 @@ function renderRuns(runs) {
 
 /** What a single zone got out of this run, which is what an inch figure means. */
 function perZoneMinutes(run) {
-  const zones = new Set(run.steps.filter((s) => s.zone_name).map((s) => s.zone_name));
+  const zones = new Set(run.steps.filter((s) => s.zone_name).map(stepZoneKey));
   return zones.size ? run.minutes / zones.size : run.minutes;
 }
 
@@ -2177,7 +2194,7 @@ function renderDaySummary(runs) {
   const problems = runs.flatMap((r) => r.steps).filter((s) => FAILURE_STATUSES.has(s.status)).length;
   const minutes = runs.reduce((total, r) => total + r.minutes, 0);
   const zones = new Set(
-    runs.flatMap((r) => r.steps).filter((s) => s.zone_name && s.minutes > 0).map((s) => s.zone_name)
+    runs.flatMap((r) => r.steps).filter((s) => s.zone_name && s.minutes > 0).map(stepZoneKey)
   );
   el("history-day-sub").textContent = [
     `${runs.length} run${runs.length === 1 ? "" : "s"}`,
@@ -2220,6 +2237,14 @@ if (missingNodes) {
 renderBuilder();
 guard(loadDashboard);
 setInterval(() => {
+  // A hidden tab has nobody looking at it; catch up the moment it's shown.
+  if (document.visibilityState === "hidden") return;
   loadDashboard();
   refreshZoneStates();
 }, 5000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    loadDashboard();
+    refreshZoneStates();
+  }
+});

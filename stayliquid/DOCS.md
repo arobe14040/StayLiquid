@@ -143,8 +143,9 @@ wanted.
 - **It expires on its own** (two hours by default, and the Dashboard shows when).
   A pause left on by accident would otherwise stop the lawn being watered
   indefinitely. When it expires, held runs are ended and logged
-  `paused_expired` rather than valves reopening after a long unattended gap;
-  the schedule then carries on normally.
+  `paused_expired` rather than valves reopening after a long unattended gap -
+  and a program that was held doesn't move on to its remaining zones either.
+  The schedule then carries on normally with the next cycle.
 - **It survives a restart**, so restarting the add-on can't quietly start
   watering again while you're still using the water.
 

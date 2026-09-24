@@ -25,6 +25,8 @@ from collections.abc import Callable
 
 import websockets
 
+from .ha_client import normalize_state
+
 log = logging.getLogger("stayliquid.state_watch")
 
 WS_URL = "ws://supervisor/core/websocket"
@@ -37,6 +39,11 @@ BACKOFF_MAX_SECONDS = 60
 # The library's own keepalive; a silently dead socket surfaces as a close.
 PING_INTERVAL_SECONDS = 20
 PING_TIMEOUT_SECONDS = 20
+
+# get_states returns every entity Home Assistant has, not just the zones, and on
+# a large install that is well past the library's 1 MiB default - which closes
+# the connection on every attempt. Bounded, but with plenty of room.
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 StateListener = Callable[[str, str], None]
 
@@ -129,6 +136,7 @@ class ZoneStateWatcher:
             ping_interval=PING_INTERVAL_SECONDS,
             ping_timeout=PING_TIMEOUT_SECONDS,
             max_queue=64,
+            max_size=MAX_MESSAGE_BYTES,
         ) as connection:
             await self._authenticate(connection, token)
             self._connection = connection
@@ -243,6 +251,7 @@ class ZoneStateWatcher:
                     self._record(entity["entity_id"], entity.get("state"))
 
     def _record(self, entity_id: str, state: str | None) -> None:
+        state = normalize_state(state)
         if entity_id not in self._entities or state is None:
             return
         if self._states.get(entity_id) == state:

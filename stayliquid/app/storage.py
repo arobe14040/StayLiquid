@@ -2,11 +2,17 @@
 Thin sqlite3 wrapper. No ORM on purpose - this app is small enough that
 plain SQL is easier to reason about than fighting an ORM around FastAPI's
 async model. All functions here are synchronous; callers from async routes
-run them in a thread via `run_in_threadpool` (see app/db.py helper) so we
-never block the event loop on disk I/O.
+run them in a thread via starlette's `run_in_threadpool` so we never block the
+event loop on disk I/O.
+
+That means several threads share the one connection, and a sqlite connection
+has one transaction, not one per thread. Writes therefore go through tx(),
+which holds a lock for the whole transaction - otherwise one thread's rollback
+could throw away another thread's half-finished insert.
 """
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +94,10 @@ def _connect():
 
 _conn = None
 
+# Reentrant, because a write sometimes reads its own result back through a
+# helper that is also used on its own (create_program -> get_program).
+_write_lock = threading.RLock()
+
 
 def get_conn():
     global _conn
@@ -167,13 +177,14 @@ def _migrate_to_start_times(conn) -> None:
 
 @contextmanager
 def tx():
-    conn = get_conn()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    with _write_lock:
+        conn = get_conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def now_iso() -> str:
@@ -204,13 +215,12 @@ def create_zone(entity_id: str, name: str) -> dict:
 
 
 def update_zone(zone_id: int, name: str | None, enabled: bool | None) -> dict | None:
-    conn = get_conn()
-    existing = conn.execute("SELECT * FROM zones WHERE id = ?", (zone_id,)).fetchone()
-    if not existing:
-        return None
-    new_name = name if name is not None else existing["name"]
-    new_enabled = int(enabled) if enabled is not None else existing["enabled"]
     with tx() as c:
+        existing = c.execute("SELECT * FROM zones WHERE id = ?", (zone_id,)).fetchone()
+        if not existing:
+            return None
+        new_name = name if name is not None else existing["name"]
+        new_enabled = int(enabled) if enabled is not None else existing["enabled"]
         c.execute(
             "UPDATE zones SET name = ?, enabled = ? WHERE id = ?",
             (new_name, new_enabled, zone_id),
@@ -256,7 +266,7 @@ def list_program_zones(program_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT pz.id, pz.zone_id, pz.duration_minutes, pz.sort_order,
-               z.entity_id, z.name AS zone_name
+               z.entity_id, z.name AS zone_name, z.enabled AS zone_enabled
         FROM program_zones pz
         JOIN zones z ON z.id = pz.zone_id
         WHERE pz.program_id = ?
@@ -291,12 +301,11 @@ def create_program(data: dict) -> dict:
 
 
 def update_program(program_id: int, data: dict) -> dict | None:
-    conn = get_conn()
-    existing = conn.execute("SELECT * FROM programs WHERE id = ?", (program_id,)).fetchone()
-    if not existing:
-        return None
-    merged = {**row_to_dict(existing), **{k: v for k, v in data.items() if v is not None}}
     with tx() as c:
+        existing = c.execute("SELECT * FROM programs WHERE id = ?", (program_id,)).fetchone()
+        if not existing:
+            return None
+        merged = {**row_to_dict(existing), **{k: v for k, v in data.items() if v is not None}}
         c.execute(
             """
             UPDATE programs SET

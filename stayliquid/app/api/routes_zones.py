@@ -1,7 +1,7 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import ha_client, runner, state_watch, storage
@@ -10,18 +10,23 @@ from ..runner import run_zone_manual, stop_zone
 router = APIRouter()
 
 
+# Twelve hours is far past any real watering; anything longer is a typo, and
+# one that would otherwise run a valve for days.
+MAX_RUN_MINUTES = 12 * 60
+
+
 class ZoneCreate(BaseModel):
-    entity_id: str
-    name: str
+    entity_id: str = Field(pattern=r"^(switch|valve)\.\w+$")
+    name: str = Field(min_length=1, max_length=100)
 
 
 class ZoneUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     enabled: bool | None = None
 
 
 class ManualRun(BaseModel):
-    minutes: float = 5
+    minutes: float = Field(default=5, gt=0, le=MAX_RUN_MINUTES)
 
 
 @router.get("/ha/entities")
@@ -68,6 +73,10 @@ async def update_zone(zone_id: int, body: ZoneUpdate):
 
 @router.delete("/zones/{zone_id}")
 async def delete_zone(zone_id: int):
+    zone = await _get_zone(zone_id)
+    # Once the zone is gone nothing on the page can stop it, so don't leave it
+    # watering. The run's own cleanup closes the valve and logs it.
+    stop_zone(zone["entity_id"])
     await run_in_threadpool(storage.delete_zone, zone_id)
     await state_watch.sync_watched_zones()
     return {"ok": True}
@@ -76,6 +85,8 @@ async def delete_zone(zone_id: int):
 @router.post("/zones/{zone_id}/run")
 async def run_zone_now(zone_id: int, body: ManualRun):
     zone = await _get_zone(zone_id)
+    if not zone["enabled"]:
+        raise HTTPException(409, "This zone is disabled. Enable it first.")
     # Better to say so than to start a run that immediately sits and waits.
     if (await runner.pause_state())["active"]:
         raise HTTPException(409, "Watering is paused. Resume it first.")

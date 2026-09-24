@@ -2,7 +2,7 @@ import os
 from datetime import datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import storage
@@ -25,7 +25,8 @@ FINISHED_STATUSES = ("completed", "running")
 
 
 class RainDelayIn(BaseModel):
-    hours: float
+    # Up to a month. Longer than that is a program to disable, not a delay.
+    hours: float = Field(gt=0, le=31 * 24)
 
 
 class PauseIn(BaseModel):
@@ -66,7 +67,7 @@ async def status():
         "pause": await runner.pause_state(),
         "rain_delay": {"active": active, "until": delay.get("until") if delay else None},
         "current_runs": current_runs,
-        "next_events": next_events(),
+        "next_events": await run_in_threadpool(next_events),
         # Reads a row per program, so keep it off the event loop.
         "planned_today": await run_in_threadpool(planned_today),
     }
@@ -143,7 +144,10 @@ async def history_stats(days: int = 14):
             bucket["problems"] += 1
             totals["problems"] += 1
             totals["errors" if status in ("error", "interrupted") else "skipped"] += 1
-        else:
+        elif status in FINISHED_STATUSES:
+            # Only runs that watered for their full time. Stopped, cut-short and
+            # paused-out runs still count their minutes above, but they - and a
+            # program skipped for a pause - aren't "runs completed".
             bucket["runs"] += 1
             totals["runs"] += 1
             if row["zone_id"]:
@@ -244,6 +248,9 @@ def _group_runs(rows: list[dict]) -> list[dict]:
         run["steps"].append({
             "id": row["id"],
             "step": row["step"],
+            # The page matches steps to zones by this, not by name - a rename
+            # would otherwise orphan everything the zone did earlier that day.
+            "zone_id": row["zone_id"],
             "zone_name": row["zone_name"],
             "status": row["status"],
             "started_at": row["started_at"],

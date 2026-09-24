@@ -23,6 +23,26 @@ _headers = {
 # case of a sprinkler relay board exposed as plain switches.
 ZONE_DOMAINS = ("switch", "valve")
 
+# A valve reports open/closed (and opening/closing in between) where a switch
+# reports on/off. Everything past this module speaks on/off, so the valve
+# vocabulary is translated here, once. A closing valve still has water going
+# through it, so it counts as on until it says closed.
+_VALVE_STATES = {"open": "on", "opening": "on", "closing": "on", "closed": "off"}
+
+# The services each domain uses to open and close. valve.* has no turn_on.
+_SERVICES = {
+    "switch": {"on": "turn_on", "off": "turn_off"},
+    "valve": {"on": "open_valve", "off": "close_valve"},
+}
+
+
+def normalize_state(state: str | None) -> str | None:
+    """Map a zone entity's state onto on/off, leaving anything else
+    (unavailable, unknown) as it is."""
+    if state is None:
+        return None
+    return _VALVE_STATES.get(state, state)
+
 
 async def get_supervisor_timezone() -> str | None:
     """Home Assistant's configured timezone, e.g. "America/New_York".
@@ -54,7 +74,7 @@ async def get_zone_candidate_entities() -> list[dict]:
                 {
                     "entity_id": entity_id,
                     "friendly_name": s.get("attributes", {}).get("friendly_name", entity_id),
-                    "state": s.get("state"),
+                    "state": normalize_state(s.get("state")),
                 }
             )
     out.sort(key=lambda e: e["friendly_name"])
@@ -62,24 +82,28 @@ async def get_zone_candidate_entities() -> list[dict]:
 
 
 async def get_state(entity_id: str) -> dict | None:
+    """The entity's state object, with `state` already mapped onto on/off."""
     async with httpx.AsyncClient(base_url=BASE_URL, headers=_headers, timeout=10) as client:
         resp = await client.get(f"/states/{entity_id}")
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
-        return resp.json()
+        state = resp.json()
+    state["state"] = normalize_state(state.get("state"))
+    return state
 
 
 async def turn_on(entity_id: str) -> None:
-    await _call_service(entity_id, "turn_on")
+    await _call_service(entity_id, "on")
 
 
 async def turn_off(entity_id: str) -> None:
-    await _call_service(entity_id, "turn_off")
+    await _call_service(entity_id, "off")
 
 
-async def _call_service(entity_id: str, service: str) -> None:
+async def _call_service(entity_id: str, direction: str) -> None:
     domain = entity_id.split(".", 1)[0]
+    service = _SERVICES.get(domain, _SERVICES["switch"])[direction]
     async with httpx.AsyncClient(base_url=BASE_URL, headers=_headers, timeout=10) as client:
         resp = await client.post(
             f"/services/{domain}/{service}",

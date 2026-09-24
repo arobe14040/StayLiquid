@@ -49,6 +49,28 @@ _resumed.set()
 # and ends by someone pressing resume, so this only has to catch the deadline.
 PAUSE_POLL_SECONDS = 15
 
+# Fires refresh_pause_gate when a pause runs out. Without it the gate only
+# reopened if a held run happened to be waiting at that moment - so a pause
+# that expired with nothing held (the run was stopped, or the add-on restarted
+# mid-pause) left every scheduled program being skipped as "paused" for good.
+_pause_timer: asyncio.TimerHandle | None = None
+
+# Set once shutdown starts, so a program can't move on to its next zone - and
+# open another valve - while the add-on is closing them.
+_shutting_down = False
+
+# Programs deleted while running. Checked between zones so a deleted program
+# doesn't carry on through the rest of its list. Program ids are never reused
+# (AUTOINCREMENT), so nothing needs to leave this set.
+_cancelled_programs: set[int] = set()
+
+# A zone ending like this means the rest of the program shouldn't go ahead:
+# a pause that ran out ends the watering (reopening valves after a long
+# unattended gap is the surprise it exists to prevent), an interrupted run means
+# the add-on is stopping, and an error may mean a valve that wouldn't close -
+# opening the next one on top of it is the wrong move.
+HALTING_OUTCOMES = ("paused_expired", "interrupted", "error")
+
 # what the dashboard shows as "currently running" - list of dicts, cleared
 # as each zone finishes. Kept in memory only; a restart clears it, which is
 # fine since the scheduler also re-evaluates from the database on restart.
@@ -210,12 +232,23 @@ async def pause_until(until_iso: str | None) -> None:
 async def refresh_pause_gate() -> None:
     """Line the in-memory gate up with what's stored. Also called at startup, so
     a pause survives a restart instead of quietly watering again."""
+    global _pause_timer
     until = await run_in_threadpool(storage.get_pause)
-    if _pause_remaining(until) > 0:
+    remaining = _pause_remaining(until)
+
+    if _pause_timer is not None:
+        _pause_timer.cancel()
+        _pause_timer = None
+
+    if remaining > 0:
         if not _paused.is_set():
             log.info("Watering paused until %s.", until)
         _resumed.clear()
         _paused.set()
+        # A moment past the deadline, so the stored expiry has definitely passed.
+        _pause_timer = asyncio.get_running_loop().call_later(
+            remaining + 0.5, lambda: asyncio.ensure_future(refresh_pause_gate())
+        )
     else:
         if _paused.is_set():
             log.info("Watering resumed.")
@@ -267,6 +300,14 @@ async def _hold_while_paused(stop_event: asyncio.Event) -> str:
         if triggered is stop_event:
             return "stopped"
 
+        # The gate opened. Resume clears the stored deadline; the expiry timer
+        # opens the gate with the deadline still there, now in the past. Only
+        # the first means carry on watering.
+        if not _paused.is_set():
+            until = await run_in_threadpool(storage.get_pause)
+            if until is not None and _pause_remaining(until) <= 0:
+                return "expired"
+
     return "ready"
 
 
@@ -295,6 +336,9 @@ async def stop_all(reason: str) -> int:
     this, a zone caught mid-run stays open: the task's own cleanup can't finish
     because awaiting anything in a cancelled task raises immediately.
     """
+    global _shutting_down
+    _shutting_down = True
+
     open_runs = list(current_runs)
     if not open_runs:
         return 0
@@ -309,6 +353,17 @@ async def stop_all(reason: str) -> int:
         await _close_valve(entry["entity_id"], entry["zone_name"])
         await run_in_threadpool(storage.finish_run, entry["run_id"], "interrupted")
     return len(open_runs)
+
+
+def stop_program(program_id: int) -> int:
+    """End a program's runs now and keep it from starting any more zones -
+    used when the program is deleted. Returns how many zones were stopped."""
+    _cancelled_programs.add(program_id)
+    stopped = 0
+    for entry in list(current_runs):
+        if entry["program_id"] == program_id and stop_zone(entry["entity_id"]):
+            stopped += 1
+    return stopped
 
 
 async def recover_orphaned_runs() -> int:
@@ -351,9 +406,15 @@ async def rain_delay_active() -> bool:
 
 
 async def run_program(program_id: int, trigger_source: str = "scheduled") -> None:
+    if _shutting_down:
+        return
     program = await run_in_threadpool(storage.get_program, program_id)
     if not program:
         return
+
+    # The gate is normally kept current by its own expiry timer; reading it
+    # again here means a missed timer still can't skip a program for nothing.
+    await refresh_pause_gate()
 
     if trigger_source == "scheduled" and await rain_delay_active():
         await run_in_threadpool(
@@ -371,7 +432,12 @@ async def run_program(program_id: int, trigger_source: str = "scheduled") -> Non
         )
         return
 
-    zones = [z for z in program["zones"] if z["duration_minutes"] > 0]
+    # A disabled zone is left out entirely, as the Zones tab promises - it
+    # isn't a step of this run, so the rest keep their numbering.
+    zones = [
+        z for z in program["zones"]
+        if z["duration_minutes"] > 0 and z.get("zone_enabled", 1)
+    ]
     if not zones:
         return
 
@@ -387,12 +453,21 @@ async def run_program(program_id: int, trigger_source: str = "scheduled") -> Non
         ))
     else:
         for step, zone in steps:
-            await _run_zone(program, zone, trigger_source, group_id, step, len(zones))
+            if _shutting_down or program_id in _cancelled_programs:
+                return
+            outcome = await _run_zone(program, zone, trigger_source, group_id, step, len(zones))
+            if outcome in HALTING_OUTCOMES:
+                if step < len(zones):
+                    log.warning(
+                        "%s: step %d ended '%s' - not starting the remaining %d zone(s).",
+                        program["name"], step, outcome, len(zones) - step,
+                    )
+                return
 
 
 async def _run_zone(program: dict, zone: dict, trigger_source: str,
-                    group_id: str, step: int, step_count: int) -> None:
-    await _water(
+                    group_id: str, step: int, step_count: int) -> str:
+    return await _water(
         program_id=program["id"],
         program_name=program["name"],
         zone_id=zone["zone_id"],
@@ -432,8 +507,9 @@ async def _water(
     group_id: str | None = None,
     step: int | None = None,
     step_count: int | None = None,
-) -> None:
+) -> str:
     """Open one valve, wait, close it - logging the outcome either way.
+    Returns the outcome, so a program can tell whether to carry on.
 
     Membership in current_runs is what says "this coroutine owns the valve". If
     stop_all() claims the entry during shutdown, the cleanup here stands down so
@@ -441,13 +517,18 @@ async def _water(
     """
     lock = _lock_for(entity_id)
     async with lock:
+        # Checked after the lock: a run queued behind another on this zone may
+        # only get here once shutdown has begun.
+        if _shutting_down:
+            return "interrupted"
+
         if await _entity_unavailable(entity_id):
             log.error("Skipping %s - %s is unavailable in Home Assistant.", zone_name, entity_id)
             await run_in_threadpool(
                 storage.log_skip, program_id, program_name, "skipped_unavailable",
                 zone_id, zone_name, trigger_source, group_id, step, step_count,
             )
-            return
+            return "skipped_unavailable"
 
         run_id = await run_in_threadpool(
             storage.start_run, program_id, program_name, zone_id, zone_name,
@@ -507,3 +588,7 @@ async def _water(
                 if not await _close_valve(entity_id, zone_name):
                     status = "error"
                 await run_in_threadpool(storage.finish_run, run_id, status)
+            else:
+                # stop_all() claimed it: already closed and logged as interrupted.
+                status = "interrupted"
+        return status
