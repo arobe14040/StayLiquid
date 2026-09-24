@@ -14,6 +14,19 @@ router = APIRouter()
 # one that would otherwise run a valve for days.
 MAX_RUN_MINUTES = 12 * 60
 
+# How long a start or stop request waits for Home Assistant to have been told.
+# Each call to it times out at 10s, so this covers one slow call; past that the
+# request answers anyway and the page shows the valve as it settles.
+TOGGLE_WAIT_SECONDS = 12
+
+# What a manual start that didn't open the valve says, by outcome.
+START_FAILED = {
+    "skipped_unavailable": (409, "is unavailable in Home Assistant."),
+    "error": (502, "didn't open - Home Assistant refused or didn't answer. See the add-on log."),
+    "interrupted": (503, "wasn't started - the add-on is shutting down."),
+    "stopped": (409, "was stopped before it opened."),
+}
+
 
 class ZoneCreate(BaseModel):
     entity_id: str = Field(pattern=r"^(switch|valve)\.\w+$")
@@ -49,8 +62,13 @@ async def zone_states():
     so a dropped stream degrades to slower rather than to stale.
     """
     zones = await run_in_threadpool(storage.list_zones)
-    states, live = await state_watch.zone_states({z["entity_id"] for z in zones})
-    return {"live": live, "states": states}
+    entity_ids = {z["entity_id"] for z in zones}
+    states, live = await state_watch.zone_states(entity_ids)
+    return {
+        "live": live,
+        "states": states,
+        "transitions": state_watch.zone_transitions(entity_ids),
+    }
 
 
 @router.post("/zones")
@@ -90,10 +108,23 @@ async def run_zone_now(zone_id: int, body: ManualRun):
     # Better to say so than to start a run that immediately sits and waits.
     if (await runner.pause_state())["active"]:
         raise HTTPException(409, "Watering is paused. Resume it first.")
+    # Answer once the valve has been opened (or failed to), not before - the
+    # page repaints from the reply, and a reply that beats the valve reads as
+    # "still off" and flips the switch back.
+    started = asyncio.get_running_loop().create_future()
     asyncio.create_task(
-        run_zone_manual(zone_id, zone["entity_id"], zone["name"], body.minutes)
+        run_zone_manual(zone_id, zone["entity_id"], zone["name"], body.minutes, started)
     )
-    return {"ok": True}
+    try:
+        outcome = await asyncio.wait_for(asyncio.shield(started), TOGGLE_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        # Queued behind another run of this zone, or Home Assistant is slow.
+        # It will still start; the page picks it up from the status poll.
+        return {"ok": True, "started": False}
+    if outcome != "on":
+        code, reason = START_FAILED.get(outcome, (502, "didn't start."))
+        raise HTTPException(code, f"{zone['name']} {reason}")
+    return {"ok": True, "started": True}
 
 
 @router.post("/zones/{zone_id}/stop")
@@ -105,7 +136,7 @@ async def stop_zone_now(zone_id: int):
     here, so this is a dependable "off" rather than only a cancel.
     """
     zone = await _get_zone(zone_id)
-    stopped = stop_zone(zone["entity_id"])
+    stopped = await runner.stop_zone_and_wait(zone["entity_id"], TOGGLE_WAIT_SECONDS)
     if not stopped:
         await runner.turn_zone_off(zone["entity_id"], zone["name"])
     return {"ok": True, "stopped": stopped}

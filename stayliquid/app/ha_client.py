@@ -44,6 +44,13 @@ def normalize_state(state: str | None) -> str | None:
     return _VALVE_STATES.get(state, state)
 
 
+def transition_of(state: str | None) -> str | None:
+    """'opening' or 'closing' while a valve is travelling, else None. On/off
+    alone can't say this, and a valve can take several seconds to move - the
+    page needs it to show "Closing..." rather than a switch that looks stuck."""
+    return state if state in ("opening", "closing") else None
+
+
 async def get_supervisor_timezone() -> str | None:
     """Home Assistant's configured timezone, e.g. "America/New_York".
 
@@ -75,6 +82,7 @@ async def get_zone_candidate_entities() -> list[dict]:
                     "entity_id": entity_id,
                     "friendly_name": s.get("attributes", {}).get("friendly_name", entity_id),
                     "state": normalize_state(s.get("state")),
+                    "raw_state": s.get("state"),
                 }
             )
     out.sort(key=lambda e: e["friendly_name"])

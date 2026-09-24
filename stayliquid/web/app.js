@@ -357,10 +357,107 @@ const QUICK_RUN_MINUTES = 10;
 
 const zoneTiles = new Map();   // zone id -> the tile's elements
 
+// ---- switching a zone, and waiting for it to happen -------------------------
+
+// A switch someone just flipped is held where they put it until Home Assistant
+// reports the valve actually got there. The request finishing isn't enough: a
+// valve can take several seconds to move, and a relay's new state arrives a
+// moment after the call returns. Repainting from the first status after the
+// request - still showing the old state - is what flicked the switch back.
+// Held no longer than this, so a valve that never moves shows as it really is.
+const TOGGLE_SETTLE_MS = 30000;
+
+const pendingToggles = new Map();   // zone id -> { on, until, inFlight }
+
+// The last status, so a flip can repaint at once instead of waiting a poll.
+let lastStatus = null;
+
+/**
+ * How to draw a zone: on or off, and whether it's on its way. `reported` is the
+ * zone from the status - its on/off state, and the transition Home Assistant
+ * (or the add-on, while closing it) says it is in.
+ */
+function zoneDisplay(zoneId, reported) {
+  const pending = pendingToggles.get(zoneId);
+  if (pending && !pending.inFlight) {
+    const arrived = !reported.transition && (reported.state === "on") === pending.on;
+    if (arrived || Date.now() > pending.until) pendingToggles.delete(zoneId);
+  }
+  const held = pendingToggles.get(zoneId);
+  const moving = reported.transition || (held ? (held.on ? "opening" : "closing") : null);
+  return {
+    isOn: moving ? moving === "opening" : reported.state === "on",
+    moving,
+    movingLabel: moving === "opening" ? "Opening…" : moving === "closing" ? "Closing…" : "",
+    unknown: !moving && reported.state == null,
+    inFlight: Boolean(held?.inFlight),
+  };
+}
+
+// While a switch waits on its valve, check every second instead of on the
+// normal 5s poll - otherwise "Closing…" lingers for up to five seconds after
+// the valve has actually closed. Stops as soon as nothing is waiting.
+const SETTLE_POLL_MS = 1000;
+let settleTimer = null;
+
+function watchSettle() {
+  if (settleTimer) return;
+  settleTimer = setInterval(() => {
+    if (!pendingToggles.size) {
+      clearInterval(settleTimer);
+      settleTimer = null;
+      return;
+    }
+    if (document.visibilityState !== "hidden") loadDashboard();
+  }, SETTLE_POLL_MS);
+}
+
+function repaintZoneControls() {
+  if (!lastStatus) return;
+  renderZonePanel(lastStatus);
+  paintZoneRunState(lastStatus);
+}
+
+/**
+ * Turn a zone on (for `minutes`) or off, from either tab. The add-on answers
+ * once Home Assistant has been told, and the switch then stays put until the
+ * valve reports it has followed.
+ */
+function switchZone(zone, turningOn, minutes) {
+  pendingToggles.set(zone.id, { on: turningOn, until: Date.now() + TOGGLE_SETTLE_MS, inFlight: true });
+  repaintZoneControls();
+
+  return guard(async () => {
+    try {
+      if (turningOn) {
+        const reply = await apiPost(`api/zones/${zone.id}/run`, { minutes });
+        toast(reply?.started === false
+          ? `${zone.name} will start as soon as it's free.`
+          : `${zone.name} running for ${fmtDuration(minutes)}.`);
+      } else {
+        await apiPost(`api/zones/${zone.id}/stop`, {});
+        toast(`${zone.name} stopped.`);
+      }
+      const pending = pendingToggles.get(zone.id);
+      if (pending) {
+        pending.inFlight = false;
+        // Counted from the reply, so a slow request doesn't eat the settle time.
+        pending.until = Date.now() + TOGGLE_SETTLE_MS;
+        watchSettle();
+      }
+    } catch (e) {
+      // It didn't happen, so there's nothing to wait for - show the real state.
+      pendingToggles.delete(zone.id);
+      throw e;
+    } finally {
+      await refreshDashboard();
+    }
+  });
+}
+
 /**
  * The zone switches. Built once and then patched, so the poll can't rebuild
- * the row someone is mid-tap on, and so a pending toggle isn't yanked back by
- * a status response that predates it.
+ * the row someone is mid-tap on.
  */
 function renderZonePanel(status) {
   const zones = status.zones || [];
@@ -402,7 +499,9 @@ function renderZonePanel(status) {
         </div>
       `;
       const button = tile.querySelector(".switch-toggle");
-      button.addEventListener("click", () => toggleZone(zone.id, button));
+      button.addEventListener("click", () =>
+        switchZone(zone, button.getAttribute("aria-checked") !== "true", QUICK_RUN_MINUTES)
+      );
       zoneTiles.set(zone.id, { tile, button, state: tile.querySelector(".zone-tile-state") });
       host.appendChild(tile);
     });
@@ -410,50 +509,21 @@ function renderZonePanel(status) {
 
   zones.forEach((zone) => {
     const refs = zoneTiles.get(zone.id);
-    if (!refs || refs.button.dataset.pending === "true") return;
+    if (!refs) return;
 
-    const isOn = zone.state === "on";
-    const unknown = zone.state == null;
+    const { isOn, movingLabel, unknown, inFlight } = zoneDisplay(zone.id, zone);
 
     refs.button.setAttribute("aria-checked", String(isOn));
     refs.button.setAttribute("aria-label", `${isOn ? "Turn off" : "Turn on"} ${zone.name}`);
-    refs.button.disabled = unknown || (!isOn && (paused || !zone.enabled));
+    refs.button.disabled = inFlight || unknown || (!isOn && (paused || !zone.enabled));
     refs.tile.classList.toggle("is-on", isOn);
     refs.tile.classList.toggle("is-unknown", unknown);
 
-    refs.state.textContent = unknown
+    refs.state.textContent = movingLabel || (unknown
       ? "State unknown"
       : isOn
         ? zone.running ? "Watering" : "On - opened elsewhere"
-        : !zone.enabled ? "Disabled" : paused ? "Paused" : "Off";
-  });
-}
-
-function toggleZone(zoneId, button) {
-  const turningOn = button.getAttribute("aria-checked") !== "true";
-
-  // Flip straight away rather than waiting out the round trip, which makes the
-  // switch feel broken. The label changes too - left alone it contradicts the
-  // switch ("Watering" beside an off switch) until the request comes back.
-  const tile = button.closest(".zone-tile");
-  button.dataset.pending = "true";
-  button.setAttribute("aria-checked", String(turningOn));
-  tile.classList.toggle("is-on", turningOn);
-  tile.querySelector(".zone-tile-state").textContent = turningOn ? "Starting…" : "Stopping…";
-
-  guard(async () => {
-    try {
-      if (turningOn) {
-        await apiPost(`api/zones/${zoneId}/run`, { minutes: QUICK_RUN_MINUTES });
-      } else {
-        await apiPost(`api/zones/${zoneId}/stop`, {});
-      }
-    } finally {
-      // Repaint from the real state either way, so a failed request puts the
-      // switch back straight away instead of at the next poll.
-      delete button.dataset.pending;
-      await refreshDashboard();
-    }
+        : !zone.enabled ? "Disabled" : paused ? "Paused" : "Off");
   });
 }
 
@@ -549,7 +619,8 @@ async function loadDashboard() {
   if (status.version) el("app-version").textContent = `v${status.version}`;
 
   // Keeps the Zones tab's run toggles honest even while another tab is showing.
-  paintZoneRunState(status.current_runs);
+  lastStatus = status;
+  paintZoneRunState(status);
 
   const pill = el("raindelay-pill");
   if (status.rain_delay.active) {
@@ -821,72 +892,54 @@ on("clear-delay-btn", "click", () =>
 
 // ---- zones tab --------------------------------------------------------------
 
-// zone_id -> the row's run toggle and minutes box, so the poll can flip a
+// zone_id -> the card's run toggle and minutes box, so the poll can flip a
 // toggle back when a run finishes without rebuilding the list underneath the
 // user's cursor.
 const zoneRows = new Map();
-let lastCurrentRuns = [];
 
 /**
- * Re-read the valves' actual on/off from Home Assistant. Without this the page
- * only knows what the state was when it was drawn, so a zone switched off in
- * HA (or by hand at the box) would keep showing as on here.
+ * Point each zone card at what's actually happening: watering for us, open
+ * from somewhere else, or on its way on or off. Painted from the same status as
+ * the Dashboard's switches, so the two can never disagree - this tab used to
+ * poll the valves separately, and the two answers crossed.
  */
-async function refreshZoneStates() {
-  if (!zoneRows.size || !el("tab-zones")?.classList.contains("active")) return;
-  let payload;
-  try {
-    payload = await apiGet("api/zones/states");
-  } catch {
-    return; // HA unreachable - keep showing the last thing we knew
-  }
-  const states = payload.states || {};
-  zoneRows.forEach((refs) => {
-    if (refs.entityId in states) refs.reportedOn = states[refs.entityId] === "on";
-  });
-  paintZoneRunState(lastCurrentRuns);
-}
-
-/** Point each zone card at whatever is actually watering right now. */
-function paintZoneRunState(currentRuns) {
-  lastCurrentRuns = currentRuns || [];
-  const running = new Map(lastCurrentRuns.map((r) => [r.zone_id, r]));
+function paintZoneRunState(status) {
+  const running = new Map((status.current_runs || []).map((r) => [r.zone_id, r]));
+  const reported = new Map((status.zones || []).map((z) => [z.id, z]));
 
   zoneRows.forEach((refs, zoneId) => {
     if (!refs.card.isConnected) return zoneRows.delete(zoneId);
     const run = running.get(zoneId);
+    const zone = reported.get(zoneId) || { state: null, transition: null };
+    const { isOn: valveOn, moving, movingLabel, inFlight } = zoneDisplay(zoneId, zone);
 
-    // A run of ours just ended, which means we closed the valve - so whatever
-    // HA reported when the list was drawn is now out of date.
-    if (refs.wasRunning && !run) refs.reportedOn = false;
-    refs.wasRunning = Boolean(run);
-
-    // Don't yank the switch back while its own request is still in flight.
-    if (refs.toggle.dataset.pending === "true") return;
-
-    // On if we're running it, or if HA said so - somebody may have switched it
-    // on outside the add-on.
-    const isOn = Boolean(run) || refs.reportedOn;
+    // On if we're running it - a paused run has its valve shut but is still
+    // ours to stop - or if the valve is open, however it was opened. While the
+    // valve is moving, show where it's going.
+    const isOn = moving ? moving === "opening" : Boolean(run) || valveOn;
     refs.toggle.setAttribute("aria-checked", String(isOn));
     refs.toggle.setAttribute("aria-label", `${isOn ? "Stop" : "Test run"} ${refs.name}`);
     refs.card.classList.toggle("is-on", isOn);
     refs.minutes.disabled = isOn;
     // The add-on refuses to run a disabled zone, so don't offer to - but a
     // disabled zone that's open can still be switched off.
-    refs.toggle.disabled = !isOn && !refs.enabled;
+    refs.toggle.disabled = inFlight || (!isOn && !refs.enabled);
 
     let state = refs.enabled ? "Off" : "Disabled";
     let tone = "pill-quiet";
     let detail = refs.idle;
 
-    if (run) {
+    if (moving) {
+      state = movingLabel;
+      detail = run ? run.program_name : moving === "closing" ? "Waiting for the valve to close" : "Waiting for the valve to open";
+    } else if (run) {
       const left = Math.ceil(runMsLeft(run) / 60000);
       state = run.paused ? "Paused" : "Watering";
       tone = run.paused ? "pill-warn" : "pill-on";
       detail = run.paused
         ? `${run.program_name} · held with ${left}m still to run`
         : `${left}m left of ${fmtDuration(run.duration_minutes)} · ${run.program_name}`;
-    } else if (refs.reportedOn) {
+    } else if (valveOn) {
       state = "On";
       tone = "pill-on";
       detail = "Opened outside the add-on";
@@ -1007,9 +1060,7 @@ async function loadZonesTab() {
       detail: card.querySelector(".zone-card-detail"),
       name: z.name,
       enabled: Boolean(z.enabled),
-      entityId: z.entity_id,
       idle,
-      reportedOn: stateByEntity[z.entity_id] === "on",
     });
 
     // On runs the zone for the minutes in the box; off stops it there and then.
@@ -1019,32 +1070,7 @@ async function loadZonesTab() {
       if (turningOn && (!mins || mins <= 0)) {
         return toast("Set how many minutes to run for.", "error");
       }
-
-      // Flip straight away and hold that until the next poll confirms it;
-      // waiting for the round trip makes the switch feel broken.
-      toggle.dataset.pending = "true";
-      toggle.setAttribute("aria-checked", String(turningOn));
-      card.classList.toggle("is-on", turningOn);
-      const refs = zoneRows.get(z.id);
-      refs.pill.textContent = turningOn ? "Starting…" : "Stopping…";
-      refs.pill.className = "pill pill-quiet zone-card-state";
-
-      guard(async () => {
-        try {
-          if (turningOn) {
-            await apiPost(`api/zones/${z.id}/run`, { minutes: mins });
-            toast(`${z.name} running for ${fmtDuration(mins)}.`);
-          } else {
-            await apiPost(`api/zones/${z.id}/stop`, {});
-            toast(`${z.name} stopped.`);
-          }
-        } finally {
-          // Repaint from the real state either way, so a failed request puts
-          // the switch back straight away instead of at the next poll.
-          delete toggle.dataset.pending;
-          await refreshDashboard();
-        }
-      });
+      switchZone(z, turningOn, mins);
     });
 
     card.querySelector(".rename-zone").addEventListener("click", () =>
@@ -1083,7 +1109,8 @@ async function loadZonesTab() {
     list.appendChild(card);
   });
 
-  paintZoneRunState(status.current_runs);
+  lastStatus = status;
+  paintZoneRunState(status);
 }
 
 function showAddZone(show) {
@@ -2240,11 +2267,7 @@ setInterval(() => {
   // A hidden tab has nobody looking at it; catch up the moment it's shown.
   if (document.visibilityState === "hidden") return;
   loadDashboard();
-  refreshZoneStates();
 }, 5000);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    loadDashboard();
-    refreshZoneStates();
-  }
+  if (document.visibilityState === "visible") loadDashboard();
 });

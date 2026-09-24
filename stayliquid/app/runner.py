@@ -37,6 +37,15 @@ _zone_locks: dict[str, asyncio.Lock] = {}
 # ended on its own or someone stopped it.
 _stop_events: dict[str, asyncio.Event] = {}
 
+# entity_id -> Event set once that run has finished closing its valve, so a stop
+# request can answer after the valve was told to close rather than before.
+_run_done: dict[str, asyncio.Event] = {}
+
+# Valves the add-on is closing right now. From the moment a run ends until Home
+# Assistant confirms the close, the valve still reads as on - without this the
+# page would show "On - opened elsewhere" for a valve we're shutting.
+_closing: set[str] = set()
+
 # A pair of complementary flags, because an Event can only be awaited for being
 # set: a running zone waits on _paused to notice a pause starting, and a paused
 # one waits on _resumed to notice it ending. refresh_pause_gate keeps them
@@ -88,9 +97,21 @@ def _lock_for(entity_id: str) -> asyncio.Lock:
     return _zone_locks[entity_id]
 
 
+def closing_now(entity_id: str) -> bool:
+    return entity_id in _closing
+
+
 async def _close_valve(entity_id: str, zone_name: str) -> bool:
     """Turn a zone off, retrying a few times. A single failed call here would
     otherwise leave the valve open until something else happened to close it."""
+    _closing.add(entity_id)
+    try:
+        return await _close_valve_attempts(entity_id, zone_name)
+    finally:
+        _closing.discard(entity_id)
+
+
+async def _close_valve_attempts(entity_id: str, zone_name: str) -> bool:
     for attempt in range(1, TURN_OFF_ATTEMPTS + 1):
         try:
             await ha_client.turn_off(entity_id)
@@ -322,6 +343,21 @@ def stop_zone(entity_id: str) -> bool:
     return True
 
 
+async def stop_zone_and_wait(entity_id: str, timeout: float) -> bool:
+    """stop_zone(), then wait (up to `timeout`) for the run to close its valve.
+    The caller - a request from the page - then answers with the close already
+    sent, instead of before it, which the page would read as "still on"."""
+    done = _run_done.get(entity_id)
+    if not stop_zone(entity_id):
+        return False
+    if done is not None:
+        try:
+            await asyncio.wait_for(done.wait(), timeout)
+        except asyncio.TimeoutError:
+            log.warning("Stopping %s is taking a while; it will still be closed.", entity_id)
+    return True
+
+
 async def turn_zone_off(entity_id: str, zone_name: str) -> bool:
     """Close a valve StayLiquid isn't running - one switched on in Home
     Assistant, or left open by something else. Stopping a run of our own goes
@@ -481,10 +517,15 @@ async def _run_zone(program: dict, zone: dict, trigger_source: str,
     )
 
 
-async def run_zone_manual(zone_id: int, entity_id: str, zone_name: str, minutes: float) -> None:
+async def run_zone_manual(zone_id: int, entity_id: str, zone_name: str, minutes: float,
+                          started: asyncio.Future | None = None) -> None:
     """One-off manual run of a single zone, outside of any program (e.g. a
-    quick test-fire from the Zones tab). Logged with program_id = NULL."""
+    quick test-fire from the Zones tab). Logged with program_id = NULL.
+
+    `started`, if given, resolves to "on" once the valve has been opened, or to
+    the outcome if it never was - so the request can say what happened."""
     await _water(
+        started=started,
         program_id=None,
         program_name="Manual run",
         zone_id=zone_id,
@@ -507,6 +548,7 @@ async def _water(
     group_id: str | None = None,
     step: int | None = None,
     step_count: int | None = None,
+    started: asyncio.Future | None = None,
 ) -> str:
     """Open one valve, wait, close it - logging the outcome either way.
     Returns the outcome, so a program can tell whether to carry on.
@@ -515,11 +557,16 @@ async def _water(
     stop_all() claims the entry during shutdown, the cleanup here stands down so
     the valve isn't closed and logged twice.
     """
+    def report(outcome: str) -> None:
+        if started is not None and not started.done():
+            started.set_result(outcome)
+
     lock = _lock_for(entity_id)
     async with lock:
         # Checked after the lock: a run queued behind another on this zone may
         # only get here once shutdown has begun.
         if _shutting_down:
+            report("interrupted")
             return "interrupted"
 
         if await _entity_unavailable(entity_id):
@@ -528,6 +575,7 @@ async def _water(
                 storage.log_skip, program_id, program_name, "skipped_unavailable",
                 zone_id, zone_name, trigger_source, group_id, step, step_count,
             )
+            report("skipped_unavailable")
             return "skipped_unavailable"
 
         run_id = await run_in_threadpool(
@@ -546,6 +594,8 @@ async def _water(
         }
         stop_event = asyncio.Event()
         _stop_events[entity_id] = stop_event
+        done = asyncio.Event()
+        _run_done[entity_id] = done
         current_runs.append(entry)
         status = "completed"
         owed = minutes * 60
@@ -568,6 +618,7 @@ async def _water(
                 entry["seconds_left"] = owed
 
                 await ha_client.turn_on(entity_id)
+                report("on")
                 status, owed = await _wait_out_run(entity_id, zone_name, stop_event, owed)
                 if status != "paused":
                     break
@@ -591,4 +642,8 @@ async def _water(
             else:
                 # stop_all() claimed it: already closed and logged as interrupted.
                 status = "interrupted"
+            report(status)
+            if _run_done.get(entity_id) is done:
+                del _run_done[entity_id]
+            done.set()
         return status

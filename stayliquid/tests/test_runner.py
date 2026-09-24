@@ -118,3 +118,21 @@ def test_deleting_a_program_stops_it(ha):
     assert ha.opened() == ["switch.front"]
     assert ha.states["switch.front"] == "off"
     assert statuses(program["id"]) == ["stopped"]
+
+
+def test_a_valve_being_closed_by_the_add_on_reads_as_closing(ha, monkeypatch):
+    """Between a run ending and Home Assistant confirming, the valve still
+    reads as on; the add-on says it's closing it rather than leave the page to
+    call it "opened elsewhere"."""
+    seen = []
+
+    async def slow_turn_off(entity_id):
+        seen.append(runner.closing_now(entity_id))
+        await asyncio.sleep(0.1)
+        ha.states[entity_id] = "off"
+
+    monkeypatch.setattr(runner.ha_client, "turn_off", slow_turn_off)
+    asyncio.run(runner.turn_zone_off("valve.garden", "Garden"))
+
+    assert seen == [True]
+    assert runner.closing_now("valve.garden") is False

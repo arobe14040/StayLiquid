@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.10.2
+
+**A zone switch no longer bounces back.** Turning a zone off could flick the
+switch off, back on, and a few seconds later off again (and the reverse when
+turning one on).
+
+- The page used to redraw from the first status after the request came back.
+  That status could still show the old state: a valve takes a few seconds to
+  move, and even a relay's new state lands a moment after the call. Now the
+  switch stays where you put it until Home Assistant reports the valve has
+  followed, showing **Opening…** or **Closing…** in the meantime. It gives up
+  after 30 seconds, so a valve that never moves shows as it really is.
+- While a switch is waiting, the page checks every second instead of every
+  five, so it settles as soon as the valve does.
+- **Stop** now answers once the valve has been told to close, and **start**
+  once it has been told to open. A start that doesn't open anything says why:
+  the zone is unavailable, or Home Assistant refused.
+- A valve the add-on is closing reads as *Closing…* rather than briefly as
+  *On - opened elsewhere*.
+- The Zones tab reads the same status as the Dashboard switches instead of
+  polling on its own, so the two can't disagree.
+
+### API
+
+- `GET /api/status` zones add `transition`: `opening`, `closing` or `null`.
+- `GET /api/zones/states` adds `transitions`.
+- `POST /api/zones/{id}/run` returns `started`, and `409`/`502` when the valve
+  wasn't opened.
+
 ## 0.10.1
 
 Fixes from a review of the whole add-on. Most are about pausing, and one

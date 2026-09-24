@@ -44,7 +44,9 @@ async def status():
     # The dashboard's zone switches need the valves' real state, and it already
     # polls this - one call beats a second one alongside it.
     zones = await run_in_threadpool(storage.list_zones)
-    states, live = await state_watch.zone_states({z["entity_id"] for z in zones})
+    entity_ids = {z["entity_id"] for z in zones}
+    states, live = await state_watch.zone_states(entity_ids)
+    transitions = state_watch.zone_transitions(entity_ids)
     running_zone_ids = {r["zone_id"] for r in current_runs}
 
     return {
@@ -55,6 +57,13 @@ async def status():
                 "entity_id": z["entity_id"],
                 "enabled": bool(z["enabled"]),
                 "state": states.get(z["entity_id"]),
+                # "opening"/"closing" while a valve travels, or while we're
+                # closing it and Home Assistant hasn't caught up - either way
+                # the page shows it moving rather than stuck in its old state.
+                "transition": (
+                    "closing" if runner.closing_now(z["entity_id"])
+                    else transitions.get(z["entity_id"])
+                ),
                 "running": z["id"] in running_zone_ids,
             }
             for z in zones

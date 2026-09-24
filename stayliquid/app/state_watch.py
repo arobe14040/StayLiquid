@@ -25,7 +25,7 @@ from collections.abc import Callable
 
 import websockets
 
-from .ha_client import normalize_state
+from .ha_client import normalize_state, transition_of
 
 log = logging.getLogger("stayliquid.state_watch")
 
@@ -54,6 +54,9 @@ class ZoneStateWatcher:
     def __init__(self) -> None:
         self._entities: set[str] = set()
         self._states: dict[str, str] = {}
+        # As Home Assistant sent it, before the on/off mapping - the only place
+        # a valve's opening/closing survives.
+        self._raw: dict[str, str] = {}
         self._listeners: list[StateListener] = []
         self._connection: websockets.ClientConnection | None = None
         self._task: asyncio.Task | None = None
@@ -90,6 +93,9 @@ class ZoneStateWatcher:
     def known_states(self) -> dict[str, str]:
         return dict(self._states)
 
+    def known_raw(self) -> dict[str, str]:
+        return dict(self._raw)
+
     def add_listener(self, listener: StateListener) -> None:
         self._listeners.append(listener)
 
@@ -104,6 +110,7 @@ class ZoneStateWatcher:
             return
         self._entities = set(entity_ids)
         self._states = {k: v for k, v in self._states.items() if k in self._entities}
+        self._raw = {k: v for k, v in self._raw.items() if k in self._entities}
         self._resubscribe.set()
 
     # -- connection --------------------------------------------------------
@@ -250,10 +257,12 @@ class ZoneStateWatcher:
                 if isinstance(entity, dict) and entity.get("entity_id") in self._entities:
                     self._record(entity["entity_id"], entity.get("state"))
 
-    def _record(self, entity_id: str, state: str | None) -> None:
-        state = normalize_state(state)
-        if entity_id not in self._entities or state is None:
+    def _record(self, entity_id: str, raw: str | None) -> None:
+        if entity_id not in self._entities or raw is None:
             return
+        self._raw[entity_id] = raw
+        # Listeners hear on/off changes only: open -> closing is still on.
+        state = normalize_state(raw)
         if self._states.get(entity_id) == state:
             return
         self._states[entity_id] = state
@@ -273,7 +282,7 @@ watcher = ZoneStateWatcher()
 # each time would be worse than the problem. One fetch is shared until it ages
 # out.
 _FALLBACK_TTL_SECONDS = 20
-_fallback = {"fetched_at": 0.0, "states": {}}
+_fallback = {"fetched_at": 0.0, "states": {}, "raw": {}}
 
 
 async def zone_states(entity_ids: set[str]) -> tuple[dict[str, str | None], bool]:
@@ -295,11 +304,21 @@ async def zone_states(entity_ids: set[str]) -> tuple[dict[str, str | None], bool
         try:
             entities = await ha_client.get_zone_candidate_entities()
             _fallback["states"] = {e["entity_id"]: e["state"] for e in entities}
+            _fallback["raw"] = {e["entity_id"]: e["raw_state"] for e in entities}
             _fallback["fetched_at"] = now
         except Exception:
             log.debug("Could not refresh zone states from Home Assistant.")
 
     return {k: _fallback["states"].get(k) for k in entity_ids}, False
+
+
+def zone_transitions(entity_ids: set[str]) -> dict[str, str | None]:
+    """Which zones Home Assistant says are opening or closing. Read after
+    zone_states(), which keeps the fallback current when the stream is down."""
+    raw = dict(_fallback["raw"])
+    if watcher.is_live():
+        raw.update(watcher.known_raw())
+    return {k: transition_of(raw.get(k)) for k in entity_ids}
 
 
 async def sync_watched_zones() -> None:

@@ -19,7 +19,10 @@ def client(ha):
         app.include_router(router, prefix="/api")
     for job in scheduler.scheduler.get_jobs():
         job.remove()
-    return TestClient(app)
+    # As a context manager the client keeps one event loop for the whole test,
+    # so a zone started by one request is still running for the next.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def program_body(**overrides):
@@ -161,3 +164,59 @@ def test_valve_states_read_as_on_and_off():
     # open and closing both mean water is flowing; the listener only hears changes.
     assert heard == ["on", "off"]
     assert watcher.state_of("valve.garden") == "off"
+
+
+def test_a_closing_valve_is_reported_as_closing():
+    watcher = state_watch.ZoneStateWatcher()
+    watcher.watch({"valve.garden"})
+    for state in ("open", "closing"):
+        watcher._handle({
+            "type": "event",
+            "event": {"variables": {"trigger": {
+                "entity_id": "valve.garden", "to_state": {"state": state},
+            }}},
+        })
+    assert watcher.state_of("valve.garden") == "on"
+    assert watcher.known_raw()["valve.garden"] == "closing"
+    assert ha_client.transition_of("closing") == "closing"
+    assert ha_client.transition_of("open") is None
+
+
+# ---- switching a zone from the page -----------------------------------------
+
+def test_start_and_stop_answer_once_home_assistant_has_been_told(client, ha):
+    """The page repaints from the reply; a reply that beat the valve read as
+    the old state and flicked the switch back."""
+    zone = add_zone("switch.front", "Front")
+
+    resp = client.post(f"/api/zones/{zone['id']}/run", json={"minutes": 5})
+    assert resp.json() == {"ok": True, "started": True}
+    assert ha.states["switch.front"] == "on"
+
+    resp = client.post(f"/api/zones/{zone['id']}/stop")
+    assert resp.json()["stopped"] is True
+    assert ha.states["switch.front"] == "off", "stop replied before closing the valve"
+
+
+def test_a_start_that_fails_says_so(client, ha, monkeypatch):
+    zone = add_zone("switch.front", "Front")
+
+    async def refuse(entity_id):
+        raise httpx.HTTPStatusError("400", request=None, response=None)
+
+    monkeypatch.setattr(ha_client, "turn_on", refuse)
+    resp = client.post(f"/api/zones/{zone['id']}/run", json={"minutes": 5})
+    assert resp.status_code == 502
+    assert "Front" in resp.json()["detail"]
+
+
+def test_an_unavailable_zone_says_so(client, ha, monkeypatch):
+    zone = add_zone("switch.front", "Front")
+
+    async def unavailable(entity_id):
+        return {"entity_id": entity_id, "state": "unavailable"}
+
+    monkeypatch.setattr(ha_client, "get_state", unavailable)
+    resp = client.post(f"/api/zones/{zone['id']}/run", json={"minutes": 5})
+    assert resp.status_code == 409
+    assert "unavailable" in resp.json()["detail"]
